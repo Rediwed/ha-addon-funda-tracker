@@ -1,0 +1,10 @@
+.git
+.gitignore
+README.md
+config.yaml
+config.example.yaml
+ha/
+data/
+addon/
+*.md
+.DS_Store

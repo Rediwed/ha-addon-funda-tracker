@@ -1,0 +1,10 @@
+/config.yaml
+data/
+*.log
+*.png
+*.html
+.env
+.env.*
+__pycache__/
+*.pyc
+.DS_Store
