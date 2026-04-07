@@ -8,10 +8,39 @@
 # ============================================================
 
 # --- Input helpers for user-configurable values ---
+#
+# FINANCE HELPERS — How to use:
+#   Go to Settings → Devices & Services → Helpers to set these values.
+#
+#   Aankoopprijs:      The price you paid for the house itself (koopsom).
+#                      → Enables "Marktwinst" (market gain) and "Markt ROI".
+#
+#   Totale Investering: Everything you've put into the house: purchase price +
+#                       renovation + loans + out-of-pocket costs.
+#                       → Enables "Totale Winst" and "Totale ROI".
+#
+#   Hypotheek Restschuld: Your current outstanding mortgage balance.
+#                         → Enables "Overwaarde" (equity) sensor.
+#
+# Example:
+#   Bought for €435k, renovated for €165k (mortgage + loans + cash) = €600k total.
+#   Set Aankoopprijs = 435000, Totale Investering = 600000.
+#   Market ROI shows how the housing market performed.
+#   Total ROI shows your actual return including renovation costs.
+#
 input_number:
   funda_purchase_price:
     name: "Funda Aankoopprijs"
     icon: mdi:cash
+    min: 0
+    max: 5000000
+    step: 1000
+    unit_of_measurement: "€"
+    mode: box
+
+  funda_total_investment:
+    name: "Funda Totale Investering"
+    icon: mdi:cash-multiple
     min: 0
     max: 5000000
     step: 1000
@@ -154,9 +183,9 @@ template:
         availability: >
           {{ states('input_number.funda_mortgage_balance') | int(0) > 0 }}
 
-      # --- 12. Profit since purchase ---
-      - name: "Funda Winst"
-        unique_id: funda_profit
+      # --- 12. Market gain (value - purchase price) ---
+      - name: "Funda Marktwinst"
+        unique_id: funda_market_profit
         state: >
           {% set value = states('sensor.funda_house_value') | int(0) %}
           {% set purchase = states('input_number.funda_purchase_price') | int(0) %}
@@ -169,17 +198,44 @@ template:
         availability: >
           {{ states('input_number.funda_purchase_price') | int(0) > 0 }}
 
-      # --- 13. ROI since purchase ---
-      - name: "Funda ROI"
-        unique_id: funda_roi
+      # --- 13. Market ROI (value vs purchase price only) ---
+      - name: "Funda Markt ROI"
+        unique_id: funda_market_roi
         state: >
           {% set value = states('sensor.funda_house_value') | int(0) %}
           {% set purchase = states('input_number.funda_purchase_price') | int(0) %}
           {{ ((value - purchase) / purchase * 100) | round(1) if purchase > 0 else 0 }}
         unit_of_measurement: "%"
-        icon: mdi:chart-areaspline
+        icon: mdi:chart-line
         availability: >
           {{ states('input_number.funda_purchase_price') | int(0) > 0 }}
+
+      # --- 14. Total profit (value - total investment) ---
+      - name: "Funda Totale Winst"
+        unique_id: funda_total_profit
+        state: >
+          {% set value = states('sensor.funda_house_value') | int(0) %}
+          {% set invested = states('input_number.funda_total_investment') | int(0) %}
+          {{ value - invested }}
+        unit_of_measurement: "€"
+        icon: >
+          {% set value = states('sensor.funda_house_value') | int(0) %}
+          {% set invested = states('input_number.funda_total_investment') | int(0) %}
+          {{ 'mdi:trending-up' if value >= invested else 'mdi:trending-down' }}
+        availability: >
+          {{ states('input_number.funda_total_investment') | int(0) > 0 }}
+
+      # --- 15. Total ROI (value vs total investment) ---
+      - name: "Funda Totale ROI"
+        unique_id: funda_total_roi
+        state: >
+          {% set value = states('sensor.funda_house_value') | int(0) %}
+          {% set invested = states('input_number.funda_total_investment') | int(0) %}
+          {{ ((value - invested) / invested * 100) | round(1) if invested > 0 else 0 }}
+        unit_of_measurement: "%"
+        icon: mdi:chart-areaspline
+        availability: >
+          {{ states('input_number.funda_total_investment') | int(0) > 0 }}
 
       # --- 14. Delta status text ---
       - name: "Funda Delta Status"
@@ -292,6 +348,9 @@ automation:
             All-time high: €{{ '{:,}'.format(state_attr('sensor.funda_house_value', 'all_time_high') | int) }}
             All-time low: €{{ '{:,}'.format(state_attr('sensor.funda_house_value', 'all_time_low') | int) }}
             {% if states('input_number.funda_purchase_price') | int(0) > 0 %}
-            Winst sinds aankoop: €{{ '{:,}'.format(states('sensor.funda_winst') | int) }} ({{ states('sensor.funda_roi') }}%)
+            Marktwinst: €{{ '{:,}'.format(states('sensor.funda_marktwinst') | int) }} ({{ states('sensor.funda_markt_roi') }}%)
+            {% endif %}
+            {% if states('input_number.funda_total_investment') | int(0) > 0 %}
+            Totale winst: €{{ '{:,}'.format(states('sensor.funda_totale_winst') | int) }} ({{ states('sensor.funda_totale_roi') }}%)
             {% endif %}
     mode: single

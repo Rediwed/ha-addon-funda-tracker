@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.3 (2026-04-07)
+- Split finance tracking: market gain (vs purchase price) + total profit (vs total investment)
+- New helpers: Totale Investering (purchase + renovation + loans + cash)
+- Sensors: funda_marktwinst, funda_markt_roi, funda_totale_winst, funda_totale_roi
+- Yearly summary includes both market and total ROI
+- Removed real name from repository.yaml
+- Updated README with finance example and clearer helper docs
+
 ## 0.9.2 (2026-04-07)
 - Import 12-month history into HA long-term statistics (recorder.import_statistics)
 - Push building details, confidence, bounds, neighbourhood to sensor attributes

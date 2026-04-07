@@ -56,19 +56,24 @@ Home Assistant add-on that tracks your house value from [Funda Mijn Huis](https:
 | `sensor.funda_prijs_per_m2` | Value per square meter |
 | `sensor.funda_delta_status` | Monthly delta percentage + direction |
 | `sensor.funda_overwaarde` | Equity (value − mortgage) |
-| `sensor.funda_winst` | Profit since purchase (value − purchase price) |
-| `sensor.funda_roi` | Return on investment since purchase (%) |
+| `sensor.funda_marktwinst` | Market gain (value − purchase price) |
+| `sensor.funda_markt_roi` | Market ROI since purchase (%) |
+| `sensor.funda_totale_winst` | Total profit (value − total investment) |
+| `sensor.funda_totale_roi` | Total ROI including renovations (%) |
 
 ### Input helpers
 
 | Helper | Description |
 |---|---|
-| `input_number.funda_purchase_price` | What you paid for the house — set this to enable profit/ROI sensors |
-| `input_number.funda_mortgage_balance` | Outstanding mortgage — set this to enable equity sensor |
+| `input_number.funda_purchase_price` | The price you paid for the house (koopsom) → enables market gain/ROI |
+| `input_number.funda_total_investment` | Everything you put in: purchase + renovation + loans + cash → enables total profit/ROI |
+| `input_number.funda_mortgage_balance` | Outstanding mortgage balance → enables equity sensor |
 | `input_number.funda_value_alert_high` | Get notified when value rises above this |
 | `input_number.funda_value_alert_low` | Get notified when value drops below this |
 
-> **Note:** Profit, ROI, and Equity sensors only appear once you set the corresponding input helper to a value > 0. Go to **Settings → Devices & Services → Helpers** or find them on the dashboard.
+> **Finance example:** You bought a house for €350k, then spent €100k renovation (mortgage), €20k green loan, and €30k cash. Set **Aankoopprijs** = 350000 and **Totale Investering** = 500000. Market ROI shows how the housing market performed, while Total ROI shows your actual return including all costs.
+
+> **Note:** Finance sensors only appear once you set the corresponding helper to a value > 0. Go to **Settings → Devices & Services → Helpers**.
 
 ## Automations (from HA package)
 
