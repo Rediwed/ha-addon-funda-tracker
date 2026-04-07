@@ -19,9 +19,8 @@ Home Assistant add-on that tracks your house value from [Funda Mijn Huis](https:
 2. Add: `https://github.com/Rediwed/ha-addon-funda-tracker`
 3. Find **Funda Tracker** and click **Install**
 4. Go to **Configuration** and enter your Funda email + password
-5. Copy `ha/packages/funda.yaml` to `/config/packages/funda.yaml` on your HA
-6. Restart HA (or reload Template entities + Input numbers + Automations)
-7. **Start** the add-on
+5. **Start** the add-on — all core sensors are created automatically
+6. *(Optional)* For finance tracking + automations: copy `ha/packages/funda.yaml` to `/config/packages/funda.yaml` and reload YAML
 
 ## Configuration
 
@@ -34,27 +33,27 @@ Home Assistant add-on that tracks your house value from [Funda Mijn Huis](https:
 
 ## Entities
 
-### Main sensor (pushed by add-on)
+### Sensors (pushed directly by add-on — no package needed)
 
 | Entity | Description |
 |---|---|
 | `sensor.funda_house_value` | Current estimated value with all data as attributes |
-
-### Template sensors (from HA package)
-
-| Entity | Description |
-|---|---|
+| `sensor.funda_ondergrens` | Lower bound of estimate range |
+| `sensor.funda_bovengrens` | Upper bound of estimate range |
 | `sensor.funda_maandwijziging` | Monthly change in € |
 | `sensor.funda_maandwijziging_pct` | Monthly change in % |
 | `sensor.funda_jaarwijziging` | Year-over-year change in € |
 | `sensor.funda_jaarwijziging_pct` | Year-over-year change in % |
 | `sensor.funda_all_time_high` | Highest recorded value |
 | `sensor.funda_all_time_low` | Lowest recorded value |
-| `sensor.funda_ondergrens` | Lower bound of estimate range |
-| `sensor.funda_bovengrens` | Upper bound of estimate range |
 | `sensor.funda_betrouwbaarheid` | Confidence level (High/Medium/Low) |
 | `sensor.funda_prijs_per_m2` | Value per square meter |
 | `sensor.funda_delta_status` | Monthly delta percentage + direction |
+
+### Finance sensors (requires optional HA package)
+
+| Entity | Description |
+|---|---|
 | `sensor.funda_overwaarde` | Equity (value − mortgage) |
 | `sensor.funda_marktwinst` | Market gain (value − purchase price) |
 | `sensor.funda_markt_roi` | Market ROI since purchase (%) |

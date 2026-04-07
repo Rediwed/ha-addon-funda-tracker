@@ -323,61 +323,120 @@ def calculate_stats(history, current_value):
 # ---------------------------------------------------------------------------
 
 def push_to_homeassistant(value, stats, address, delta, home, estimates):
+    """Push individual sensors to HA via Supervisor API."""
     import requests as std_requests
     token = os.environ.get("SUPERVISOR_TOKEN")
     if not token:
         log.warning("SUPERVISOR_TOKEN not set -- skipping HA push.")
         return False
 
-    log.info("Pushing to Home Assistant...")
+    log.info("Pushing sensors to Home Assistant...")
 
     current = estimates.get("currentEstimate", {})
     bld = home.get("buildingDetail", {})
     addr = home.get("address", {})
+    floor_size = bld.get("floorSize", 0)
 
-    attrs = {
-        "unit_of_measurement": "EUR",
-        "friendly_name": "Funda Woningwaarde",
-        "icon": "mdi:home-analytics",
-        "state_class": "measurement",
-        "address": address or "Onbekend",
-        "last_scraped": datetime.now().isoformat(),
-        # Estimate bounds
-        "lower_bound": current.get("lowerBound"),
-        "upper_bound": current.get("upperBound"),
-        "confidence_level": estimates.get("confidenceLevel"),
-        # Delta
-        "delta_pct": (delta or {}).get("delta"),
-        "delta_status": (delta or {}).get("status"),
-        # Building details
-        "floor_size": bld.get("floorSize"),
-        "plot_size": bld.get("plotSize"),
-        "building_type": bld.get("buildingType"),
-        "year_of_construction": bld.get("yearOfConstruction"),
-        "maintenance_state": bld.get("maintenanceState"),
-        # Location
-        "neighbourhood": addr.get("neighbourhood"),
-        "city": addr.get("city"),
-    }
-    # Add stats (skip None values)
-    attrs.update({k: v for k, v in stats.items() if v is not None})
+    # Build list of sensors to push
+    sensors = [
+        # Main value sensor (keeps all attributes for backward compatibility)
+        ("sensor.funda_house_value", value, {
+            "unit_of_measurement": "EUR",
+            "friendly_name": "Funda Woningwaarde",
+            "icon": "mdi:home-analytics",
+            "state_class": "measurement",
+            "address": address or "Onbekend",
+            "last_scraped": datetime.now().isoformat(),
+            "lower_bound": current.get("lowerBound"),
+            "upper_bound": current.get("upperBound"),
+            "confidence_level": estimates.get("confidenceLevel"),
+            "delta_pct": (delta or {}).get("delta"),
+            "delta_status": (delta or {}).get("status"),
+            "floor_size": floor_size,
+            "plot_size": bld.get("plotSize"),
+            "building_type": bld.get("buildingType"),
+            "year_of_construction": bld.get("yearOfConstruction"),
+            "maintenance_state": bld.get("maintenanceState"),
+            "neighbourhood": addr.get("neighbourhood"),
+            "city": addr.get("city"),
+        }),
+        # Bounds
+        ("sensor.funda_ondergrens", current.get("lowerBound", 0), {
+            "unit_of_measurement": "EUR", "friendly_name": "Funda Ondergrens",
+            "icon": "mdi:arrow-collapse-down", "state_class": "measurement",
+        }),
+        ("sensor.funda_bovengrens", current.get("upperBound", 0), {
+            "unit_of_measurement": "EUR", "friendly_name": "Funda Bovengrens",
+            "icon": "mdi:arrow-collapse-up", "state_class": "measurement",
+        }),
+        # Monthly change
+        ("sensor.funda_maandwijziging", stats.get("monthly_change", 0), {
+            "unit_of_measurement": "EUR", "friendly_name": "Funda Maandwijziging",
+            "icon": "mdi:trending-up" if (stats.get("monthly_change") or 0) >= 0 else "mdi:trending-down",
+        }),
+        ("sensor.funda_maandwijziging_pct", stats.get("monthly_change_pct", 0), {
+            "unit_of_measurement": "%", "friendly_name": "Funda Maandwijziging %",
+            "icon": "mdi:percent",
+        }),
+        # Yearly change
+        ("sensor.funda_jaarwijziging", stats.get("yearly_change", 0), {
+            "unit_of_measurement": "EUR", "friendly_name": "Funda Jaarwijziging",
+            "icon": "mdi:chart-line",
+        }),
+        ("sensor.funda_jaarwijziging_pct", stats.get("yearly_change_pct", 0), {
+            "unit_of_measurement": "%", "friendly_name": "Funda Jaarwijziging %",
+            "icon": "mdi:percent",
+        }),
+        # All-time
+        ("sensor.funda_all_time_high", stats.get("all_time_high", 0), {
+            "unit_of_measurement": "EUR", "friendly_name": "Funda All-Time High",
+            "icon": "mdi:arrow-up-bold",
+        }),
+        ("sensor.funda_all_time_low", stats.get("all_time_low", 0), {
+            "unit_of_measurement": "EUR", "friendly_name": "Funda All-Time Low",
+            "icon": "mdi:arrow-down-bold",
+        }),
+        # Confidence
+        ("sensor.funda_betrouwbaarheid", estimates.get("confidenceLevel", "Onbekend"), {
+            "friendly_name": "Funda Betrouwbaarheid",
+            "icon": "mdi:shield-check" if estimates.get("confidenceLevel") == "High" else "mdi:shield-half-full",
+        }),
+        # Price per m²
+        ("sensor.funda_prijs_per_m2", round(value / floor_size) if floor_size > 0 else 0, {
+            "unit_of_measurement": "EUR/m²", "friendly_name": "Funda Prijs per m²",
+            "icon": "mdi:ruler-square",
+        }),
+        # Delta status
+        ("sensor.funda_delta_status",
+         f"{(delta or {}).get('delta', '?')}% {(delta or {}).get('status', '')}" if delta else "Onbekend", {
+            "friendly_name": "Funda Delta Status",
+            "icon": "mdi:arrow-up" if (delta or {}).get("status") == "Increased" else "mdi:arrow-down",
+        }),
+    ]
 
-    # Remove None values from attrs
-    attrs = {k: v for k, v in attrs.items() if v is not None}
+    # Only push change sensors if they have values
+    sensors = [(eid, state, attrs) for eid, state, attrs in sensors
+               if state is not None]
 
-    try:
-        resp = std_requests.post(
-            "http://supervisor/core/api/states/sensor.funda_house_value",
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json={"state": value, "attributes": attrs},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        log.info("Pushed: sensor.funda_house_value = EUR %s", f"{value:,}")
-        return True
-    except std_requests.RequestException as exc:
-        log.error("HA push failed: %s", exc)
-        return False
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    pushed = 0
+    for entity_id, state, attrs in sensors:
+        # Remove None values from attrs
+        clean_attrs = {k: v for k, v in attrs.items() if v is not None}
+        try:
+            resp = std_requests.post(
+                f"http://supervisor/core/api/states/{entity_id}",
+                headers=headers,
+                json={"state": state, "attributes": clean_attrs},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            pushed += 1
+        except std_requests.RequestException as exc:
+            log.error("Failed to push %s: %s", entity_id, exc)
+
+    log.info("Pushed %d/%d sensors to HA.", pushed, len(sensors))
+    return pushed > 0
 
 
 def import_statistics(estimates):

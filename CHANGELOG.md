@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.5 (2026-04-07)
+- Push 12 individual sensors directly from scraper (no package needed for core sensors)
+- HA package now optional — only needed for finance sensors + automations
+- Package slimmed from 350 to 234 lines
+- Sensors auto-created on add-on start: value, bounds, changes, all-time, confidence, price/m², delta
+
 ## 0.9.4 (2026-04-07)
 - Import statistics for bounds sensors (ondergrens/bovengrens) so ApexCharts shows full history
 - Fix dashboard markdown card (table → list format)
