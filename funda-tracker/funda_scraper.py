@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """
-Funda.nl house value scraper for Home Assistant add-on.
+Funda.nl house value tracker for Home Assistant add-on.
 
-Reads config from /data/options.json (HA add-on options),
-uses the Supervisor API to push sensor state,
-stores history in /data/history.json.
+Logs into Funda, calls the Waardecheck API for the current house value
+and history, pushes sensor state to HA via Supervisor API.
+
+Uses curl_cffi for Chrome TLS fingerprint impersonation to bypass anti-bot.
 """
 
 import json
 import logging
 import os
-import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse, unquote
 
-import requests
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+from curl_cffi import requests as cffi_requests
+from bs4 import BeautifulSoup
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,170 +26,177 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-DATA_DIR = Path("/data")
+DATA_DIR = Path(os.environ.get("FUNDA_DATA_DIR", "/data"))
 HISTORY_FILE = DATA_DIR / "history.json"
 
 FUNDA_BASE = "https://www.funda.nl"
-FUNDA_LOGIN_URL = f"{FUNDA_BASE}/account/login/"
-FUNDA_MIJN_HUIS_URL = f"{FUNDA_BASE}/mijn-huis/"
-
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux aarch64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
+FUNDA_LOGIN_START = f"{FUNDA_BASE}/mijn/inloggen/"
+FUNDA_MIJN_HUIS = f"{FUNDA_BASE}/mijn-huis/"
+WAARDECHECK_API = "https://waardecheck.funda.io/api"
 
 
 # ---------------------------------------------------------------------------
-# Config (HA add-on options)
+# Config
 # ---------------------------------------------------------------------------
 
 def load_options():
     options_path = DATA_DIR / "options.json"
     if not options_path.exists():
-        log.error("No options.json found — add-on not configured.")
+        log.error("No options.json found -- add-on not configured.")
         sys.exit(1)
     with open(options_path) as f:
-        return json.load(f)
+        opts = json.load(f)
+    log.info("Options loaded (email: %s)", opts.get("funda_email", "?")[:3] + "***")
+    return opts
 
 
 # ---------------------------------------------------------------------------
-# Scraper (Playwright)
+# Auth
 # ---------------------------------------------------------------------------
 
-def scrape_funda(email, password):
-    """Launch headless browser, log in to Funda, and return the house value."""
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
-        )
-        context = browser.new_context(user_agent=USER_AGENT, locale="nl-NL")
-        page = context.new_page()
-
-        try:
-            # --- Login --------------------------------------------------------
-            log.info("Navigating to Funda login…")
-            page.goto(FUNDA_LOGIN_URL, wait_until="domcontentloaded")
-
-            _dismiss_cookies(page)
-
-            log.info("Filling login form…")
-            page.fill('input[type="email"], input[name="email"], #Email', email)
-            page.fill('input[type="password"], input[name="password"], #Password', password)
-            page.click('button[type="submit"]')
-
-            page.wait_for_load_state("networkidle", timeout=15_000)
-
-            if "/login" in page.url.lower():
-                _save_debug(page, "login_failed")
-                log.error("Login failed — still on the login page. Check credentials.")
-                return None
-
-            log.info("Login successful (%s)", page.url)
-
-            # --- Mijn Huis ---------------------------------------------------
-            log.info("Navigating to Mijn Huis…")
-            page.goto(FUNDA_MIJN_HUIS_URL, wait_until="domcontentloaded")
-            page.wait_for_load_state("networkidle", timeout=15_000)
-
-            if "/login" in page.url.lower():
-                log.error("Redirected to login — session may have expired.")
-                return None
-
-            _dismiss_cookies(page)
-            page.wait_for_timeout(3000)
-
-            # --- Extract value ------------------------------------------------
-            value = _extract_value(page)
-            address = _extract_address(page)
-
-            if value is None:
-                _save_debug(page, "no_value")
-                log.error("Could not find house value. Debug screenshot + HTML saved.")
-                return None
-
-            return {
-                "value": value,
-                "address": address,
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "scraped_at": datetime.now().isoformat(),
-            }
-
-        except PlaywrightTimeout as exc:
-            _save_debug(page, "timeout")
-            log.error("Timeout during scraping: %s", exc)
-            return None
-        finally:
-            browser.close()
+def create_session():
+    session = cffi_requests.Session(impersonate="chrome")
+    session.headers.update({
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+    })
+    return session
 
 
-def _dismiss_cookies(page):
-    for selector in [
-        'button:has-text("Accepteren")',
-        'button:has-text("Alles accepteren")',
-        'button:has-text("Accept")',
-        "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
-        '[data-testid="accept-cookies"]',
-    ]:
-        try:
-            page.click(selector, timeout=3000)
-            log.debug("Dismissed cookie banner via %s", selector)
-            return
-        except PlaywrightTimeout:
-            continue
+def login(session, email, password):
+    """Login to Funda via OIDC flow. Returns True on success."""
+    # Step 1: Get login page (Funda redirects to login.funda.nl)
+    log.info("[1/4] Getting login page...")
+    resp = session.get(FUNDA_LOGIN_START, allow_redirects=True)
+    if resp.status_code != 200:
+        log.error("  Failed to load login page: %d", resp.status_code)
+        return False
+
+    # Step 2: Parse and submit login form
+    log.info("[2/4] Submitting credentials...")
+    soup = BeautifulSoup(resp.text, "html.parser")
+    form = soup.find("form")
+    if not form:
+        log.error("  No login form found on page")
+        return False
+
+    parsed = urlparse(resp.url)
+    form_base = f"{parsed.scheme}://{parsed.netloc}"
+    action = form.get("action", "")
+    form_url = form_base + action if action.startswith("/") else (action if action.startswith("http") else resp.url)
+
+    form_data = {}
+    for inp in form.find_all("input"):
+        name = inp.get("name")
+        if name and inp.get("type", "").lower() != "submit":
+            form_data[name] = inp.get("value", "")
+
+    form_data["UserName"] = email
+    form_data["Password"] = password
+
+    resp = session.post(form_url, data=form_data, allow_redirects=True)
+    log.info("  Post-login: %d %s", resp.status_code, resp.url[:80])
+
+    # Step 3: Follow OIDC form_post callbacks
+    log.info("[3/4] Following OIDC redirects...")
+    resp = _follow_oidc_redirects(session, resp)
+
+    # Step 4: Visit Mijn Huis to finalize session
+    log.info("[4/4] Establishing session...")
+    resp = session.get(FUNDA_MIJN_HUIS, allow_redirects=True)
+
+    token = _get_token(session)
+    if not token:
+        log.error("  No auth token after login -- credentials may be wrong.")
+        return False
+
+    log.info("Login successful!")
+    return True
 
 
-def _extract_value(page):
-    price_re = re.compile(r"€\s*([\d.]+(?:\.\d{3})*)")
+def _follow_oidc_redirects(session, resp, max_hops=5):
+    """Follow auto-submitting hidden forms (OIDC form_post callbacks)."""
+    for i in range(max_hops):
+        soup = BeautifulSoup(resp.text, "html.parser")
+        form = soup.find("form")
+        if not form:
+            break
 
-    body_text = page.inner_text("body")
-    matches = price_re.findall(body_text)
-    for match_str in matches:
-        candidate = int(match_str.replace(".", ""))
-        if 50_000 < candidate < 10_000_000:
-            log.info("Found value via text search: €%s", f"{candidate:,}")
-            return candidate
+        inputs = form.find_all("input")
+        visible = [inp for inp in inputs if inp.get("type", "").lower() not in ("hidden", "submit")]
+        if visible:
+            break  # Real form, not auto-submit
 
-    for selector in [
-        '[data-test-id*="value"]',
-        '[data-testid*="value"]',
-        '[class*="waarde"]',
-        '[class*="value"]',
-        '[class*="price"]',
-    ]:
-        try:
-            elements = page.query_selector_all(selector)
-            for el in elements:
-                text = el.inner_text()
-                m = price_re.search(text)
-                if m:
-                    candidate = int(m.group(1).replace(".", ""))
-                    if 50_000 < candidate < 10_000_000:
-                        log.info("Found value via selector '%s': €%s", selector, f"{candidate:,}")
-                        return candidate
-        except Exception:
-            continue
+        hidden = {inp.get("name"): inp.get("value", "") for inp in inputs
+                  if inp.get("name") and inp.get("type", "").lower() == "hidden"}
+        if not hidden:
+            break
 
-    return None
+        action = form.get("action", "")
+        if not action:
+            break
+
+        if action.startswith("/"):
+            p = urlparse(resp.url)
+            action = f"{p.scheme}://{p.netloc}{action}"
+
+        log.info("  OIDC redirect %d -> %s", i + 1, action[:80])
+        resp = session.post(action, data=hidden, allow_redirects=True)
+
+    return resp
 
 
-def _extract_address(page):
-    addr_re = re.compile(r"[A-Z][a-z]+\S*\s+\d+\s*\w?,?\s*\d{4}\s*[A-Z]{2}")
-    body_text = page.inner_text("body")
-    m = addr_re.search(body_text)
-    return m.group(0).strip() if m else None
+def _get_token(session):
+    """Extract the OIDC access token from session cookies."""
+    return unquote(session.cookies.get("funda.shell.oidc.token", "")) or None
 
 
-def _save_debug(page, label):
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    screenshot_path = DATA_DIR / f"debug_{label}_{ts}.png"
-    html_path = DATA_DIR / f"debug_{label}_{ts}.html"
-    try:
-        page.screenshot(path=str(screenshot_path), full_page=True)
-        html_path.write_text(page.content())
-        log.info("Debug files saved: %s, %s", screenshot_path, html_path)
-    except Exception as exc:
-        log.warning("Failed to save debug files: %s", exc)
+# ---------------------------------------------------------------------------
+# Waardecheck API
+# ---------------------------------------------------------------------------
+
+def fetch_waardecheck(session):
+    """Fetch house value + history from the Waardecheck API."""
+    token = _get_token(session)
+    if not token:
+        log.error("No auth token available.")
+        return None
+
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {token}",
+        "Origin": "https://www.funda.nl",
+        "Referer": "https://www.funda.nl/mijn-huis/",
+    }
+
+    # Get valuation data (v2 has history + current estimate)
+    log.info("Fetching Waardecheck from API...")
+    resp = session.get(f"{WAARDECHECK_API}/v2/estimates", headers=headers)
+    if resp.status_code != 200:
+        log.error("  v2/estimates failed: %d", resp.status_code)
+        return None
+
+    estimates = resp.json()
+    log.info("  Got estimate: EUR %s (range EUR %s - EUR %s)",
+             f"{estimates['currentEstimate']['value']:,}",
+             f"{estimates['currentEstimate']['lowerBound']:,}",
+             f"{estimates['currentEstimate']['upperBound']:,}")
+
+    # Get home info (address, building details)
+    resp = session.get(f"{WAARDECHECK_API}/v1/homes", headers=headers)
+    home = resp.json() if resp.status_code == 200 else {}
+
+    return {
+        "estimates": estimates,
+        "home": home,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -198,35 +206,85 @@ def _save_debug(page, label):
 def load_history():
     if HISTORY_FILE.exists():
         with open(HISTORY_FILE) as f:
-            return json.load(f)
+            data = json.load(f)
+        log.info("History loaded: %d entries", len(data.get("entries", [])))
+        return data
+    log.info("No history -- starting fresh")
     return {"entries": []}
 
 
 def save_history(history):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     with open(HISTORY_FILE, "w") as f:
         json.dump(history, f, indent=2, ensure_ascii=False)
-    log.info("History saved to %s", HISTORY_FILE)
+    log.info("History saved (%d entries)", len(history.get("entries", [])))
 
 
-def update_history(history, entry):
-    current_month = entry["date"][:7]
+def update_history(history, api_data):
+    """Import current + historical data from the API response."""
+    estimates = api_data["estimates"]
+    home = api_data.get("home", {})
+    addr = home.get("address", {})
+
+    if addr:
+        history["address"] = f"{addr.get('street', '')} {addr.get('houseNumber', '')}, {addr.get('postalCode', '')} {addr.get('city', '')}"
+
+    # Import history from API
+    imported = 0
+    for h in estimates.get("history", []):
+        date = h.get("date", "")[:10]
+        month = date[:7]
+        existing = [e for e in history["entries"] if e["date"][:7] == month]
+        if not existing:
+            history["entries"].append({
+                "date": date,
+                "value": h["value"],
+                "lower_bound": h.get("lowerBound"),
+                "upper_bound": h.get("upperBound"),
+                "source": "api_history",
+                "scraped_at": datetime.now().isoformat(),
+            })
+            imported += 1
+
+    if imported:
+        log.info("Imported %d historical entries from API", imported)
+
+    # Add/update current month
+    current = estimates["currentEstimate"]
+    now = datetime.now().strftime("%Y-%m-%d")
+    month = now[:7]
+
     for i, e in enumerate(history["entries"]):
-        if e["date"][:7] == current_month:
-            history["entries"][i] = entry
-            log.info("Updated existing entry for %s", current_month)
-            return history
-    history["entries"].append(entry)
-    log.info("Added new entry for %s", current_month)
+        if e["date"][:7] == month:
+            history["entries"][i] = {
+                "date": now,
+                "value": current["value"],
+                "lower_bound": current.get("lowerBound"),
+                "upper_bound": current.get("upperBound"),
+                "source": "api_current",
+                "scraped_at": datetime.now().isoformat(),
+            }
+            break
+    else:
+        history["entries"].append({
+            "date": now,
+            "value": current["value"],
+            "lower_bound": current.get("lowerBound"),
+            "upper_bound": current.get("upperBound"),
+            "source": "api_current",
+            "scraped_at": datetime.now().isoformat(),
+        })
+
+    history["entries"].sort(key=lambda e: e["date"])
     return history
 
 
 # ---------------------------------------------------------------------------
-# Calculations
+# Stats
 # ---------------------------------------------------------------------------
 
 def calculate_stats(history, current_value):
     entries = sorted(history.get("entries", []), key=lambda e: e["date"])
-
     stats = {
         "current_value": current_value,
         "previous_value": None,
@@ -238,7 +296,6 @@ def calculate_stats(history, current_value):
         "all_time_low": current_value,
         "total_entries": len(entries),
     }
-
     if len(entries) >= 2:
         prev = entries[-2]
         stats["previous_value"] = prev["value"]
@@ -247,7 +304,6 @@ def calculate_stats(history, current_value):
             stats["monthly_change_pct"] = round(
                 (current_value - prev["value"]) / prev["value"] * 100, 2
             )
-
     if len(entries) >= 13:
         year_ago = entries[-13]
         stats["yearly_change"] = current_value - year_ago["value"]
@@ -255,51 +311,141 @@ def calculate_stats(history, current_value):
             stats["yearly_change_pct"] = round(
                 (current_value - year_ago["value"]) / year_ago["value"] * 100, 2
             )
-
-    all_values = [e["value"] for e in entries]
-    if all_values:
-        stats["all_time_high"] = max(all_values)
-        stats["all_time_low"] = min(all_values)
-
+    vals = [e["value"] for e in entries]
+    if vals:
+        stats["all_time_high"] = max(vals)
+        stats["all_time_low"] = min(vals)
     return stats
 
 
 # ---------------------------------------------------------------------------
-# Home Assistant push (Supervisor API)
+# Home Assistant
 # ---------------------------------------------------------------------------
 
-def push_to_homeassistant(entry, stats):
-    """Push sensor state to HA via Supervisor internal API."""
+def push_to_homeassistant(value, stats, address, delta, home, estimates):
+    import requests as std_requests
     token = os.environ.get("SUPERVISOR_TOKEN")
     if not token:
-        log.warning("SUPERVISOR_TOKEN not set — not running as HA add-on?")
+        log.warning("SUPERVISOR_TOKEN not set -- skipping HA push.")
         return False
 
-    url = "http://supervisor/core/api/states/sensor.funda_house_value"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
+    log.info("Pushing to Home Assistant...")
+
+    current = estimates.get("currentEstimate", {})
+    bld = home.get("buildingDetail", {})
+    addr = home.get("address", {})
 
     attrs = {
-        "unit_of_measurement": "€",
+        "unit_of_measurement": "EUR",
         "friendly_name": "Funda Woningwaarde",
         "icon": "mdi:home-analytics",
         "state_class": "measurement",
-        "address": entry.get("address") or "Onbekend",
-        "last_scraped": entry["scraped_at"],
+        "address": address or "Onbekend",
+        "last_scraped": datetime.now().isoformat(),
+        # Estimate bounds
+        "lower_bound": current.get("lowerBound"),
+        "upper_bound": current.get("upperBound"),
+        "confidence_level": estimates.get("confidenceLevel"),
+        # Delta
+        "delta_pct": (delta or {}).get("delta"),
+        "delta_status": (delta or {}).get("status"),
+        # Building details
+        "floor_size": bld.get("floorSize"),
+        "plot_size": bld.get("plotSize"),
+        "building_type": bld.get("buildingType"),
+        "year_of_construction": bld.get("yearOfConstruction"),
+        "maintenance_state": bld.get("maintenanceState"),
+        # Location
+        "neighbourhood": addr.get("neighbourhood"),
+        "city": addr.get("city"),
     }
+    # Add stats (skip None values)
     attrs.update({k: v for k, v in stats.items() if v is not None})
 
-    payload = {"state": entry["value"], "attributes": attrs}
+    # Remove None values from attrs
+    attrs = {k: v for k, v in attrs.items() if v is not None}
 
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=10)
+        resp = std_requests.post(
+            "http://supervisor/core/api/states/sensor.funda_house_value",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"state": value, "attributes": attrs},
+            timeout=10,
+        )
         resp.raise_for_status()
-        log.info("Pushed to HA: sensor.funda_house_value = €%s", f"{entry['value']:,}")
+        log.info("Pushed: sensor.funda_house_value = EUR %s", f"{value:,}")
         return True
-    except requests.RequestException as exc:
-        log.error("Failed to push to Home Assistant: %s", exc)
+    except std_requests.RequestException as exc:
+        log.error("HA push failed: %s", exc)
+        return False
+
+
+def import_statistics(estimates):
+    """Import historical data into HA's long-term statistics.
+
+    This allows the HA history graph to show past months even though
+    the sensor didn't exist yet. Uses recorder.import_statistics.
+    Runs on every scrape — HA handles deduplication internally.
+    """
+    import requests as std_requests
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return False
+
+    history = estimates.get("history", [])
+    if not history:
+        log.info("No historical data to import into HA statistics.")
+        return True
+
+    log.info("Importing %d historical data points into HA statistics...", len(history))
+
+    stats = []
+    for h in history:
+        date_str = h.get("date", "")
+        if not date_str:
+            continue
+        # Parse date and create an ISO timestamp at midnight UTC
+        try:
+            dt = datetime.strptime(date_str[:10], "%Y-%m-%d")
+            ts = dt.strftime("%Y-%m-%dT00:00:00+00:00")
+        except ValueError:
+            continue
+
+        stats.append({
+            "start": ts,
+            "mean": h["value"],
+            "min": h.get("lowerBound", h["value"]),
+            "max": h.get("upperBound", h["value"]),
+        })
+
+    if not stats:
+        return True
+
+    payload = {
+        "has_mean": True,
+        "has_sum": False,
+        "name": "Funda Woningwaarde",
+        "source": "recorder",
+        "statistic_id": "sensor.funda_house_value",
+        "unit_of_measurement": "EUR",
+        "stats": stats,
+    }
+
+    try:
+        resp = std_requests.post(
+            "http://supervisor/core/api/services/recorder/import_statistics",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        log.info("Imported %d historical statistics into HA.", len(stats))
+        for s in stats:
+            log.info("  %s: EUR %s (min EUR %s, max EUR %s)",
+                     s["start"][:10], f"{s['mean']:,}", f"{s['min']:,}", f"{s['max']:,}")
+        return True
+    except std_requests.RequestException as exc:
+        log.error("Statistics import failed: %s", exc)
         return False
 
 
@@ -308,39 +454,75 @@ def push_to_homeassistant(entry, stats):
 # ---------------------------------------------------------------------------
 
 def run():
-    """Single scrape run — called by run.sh on schedule."""
-    options = load_options()
+    log.info("")
+    log.info("=" * 60)
+    log.info("  FUNDA TRACKER -- Starting scrape")
+    log.info("=" * 60)
 
+    options = load_options()
     email = options.get("funda_email", "")
     password = options.get("funda_password", "")
 
     if not email or not password:
-        log.error("Funda credentials not configured. Set them in the add-on options.")
+        log.error("Funda credentials not configured!")
         return False
 
-    entry = scrape_funda(email, password)
-    if entry is None:
+    session = create_session()
+
+    if not login(session, email, password):
+        log.error("Login failed!")
         return False
+
+    api_data = fetch_waardecheck(session)
+    if not api_data:
+        log.error("Failed to fetch Waardecheck data.")
+        return False
+
+    estimates = api_data["estimates"]
+    current = estimates["currentEstimate"]
+    home = api_data.get("home", {})
+    addr = home.get("address", {})
+    address = f"{addr.get('street', '')} {addr.get('houseNumber', '')}, {addr.get('postalCode', '')} {addr.get('city', '')}" if addr else None
 
     history = load_history()
-    history = update_history(history, entry)
-    if entry.get("address"):
-        history["address"] = entry["address"]
+    history = update_history(history, api_data)
     save_history(history)
 
-    stats = calculate_stats(history, entry["value"])
+    stats = calculate_stats(history, current["value"])
 
-    log.info(
-        "🏠 Funda Woningwaarde: €%s | Maand: %s | Jaar: %s | Datapunten: %d",
-        f"{entry['value']:,}",
-        f"€{stats['monthly_change']:+,} ({stats['monthly_change_pct']:+.2f}%)"
-        if stats["monthly_change"] is not None else "n/a",
-        f"€{stats['yearly_change']:+,} ({stats['yearly_change_pct']:+.2f}%)"
-        if stats["yearly_change"] is not None else "n/a",
-        stats["total_entries"],
-    )
+    # Summary
+    log.info("")
+    log.info("=" * 60)
+    log.info("  RESULTS")
+    log.info("  %-24s EUR %s", "Current value:", f"{current['value']:,}")
+    log.info("  %-24s EUR %s - EUR %s", "Range:", f"{current.get('lowerBound', 0):,}", f"{current.get('upperBound', 0):,}")
+    if address:
+        log.info("  %-24s %s", "Address:", address)
+    delta = estimates.get("estimateDelta", {})
+    if delta:
+        log.info("  %-24s %s%% (%s)", "Monthly delta:", delta.get("delta", "?"), delta.get("status", "?"))
+    log.info("  %-24s %s", "Confidence:", estimates.get("confidenceLevel", "?"))
+    if stats["monthly_change"] is not None:
+        log.info("  %-24s EUR %s (%s%%)", "Monthly change:", f"{stats['monthly_change']:+,}", f"{stats['monthly_change_pct']:+.2f}")
+    if stats["yearly_change"] is not None:
+        log.info("  %-24s EUR %s (%s%%)", "Yearly change:", f"{stats['yearly_change']:+,}", f"{stats['yearly_change_pct']:+.2f}")
+    log.info("  %-24s EUR %s", "All-time high:", f"{stats['all_time_high']:,}")
+    log.info("  %-24s EUR %s", "All-time low:", f"{stats['all_time_low']:,}")
+    log.info("  %-24s %d", "Data points:", stats["total_entries"])
+    history_entries = estimates.get("history", [])
+    if history_entries:
+        log.info("  Historical data from API:")
+        for h in history_entries:
+            log.info("    %s: EUR %s (EUR %s - EUR %s)", h["date"], f"{h['value']:,}", f"{h.get('lowerBound', 0):,}", f"{h.get('upperBound', 0):,}")
+    log.info("=" * 60)
 
-    push_to_homeassistant(entry, stats)
+    push_to_homeassistant(current["value"], stats, address, delta, home, estimates)
+
+    # Import historical data into HA long-term statistics
+    import_statistics(estimates)
+
+    log.info("")
+    log.info("Scrape complete! Next run on day %s.", options.get("schedule_day", 10))
     return True
 
 

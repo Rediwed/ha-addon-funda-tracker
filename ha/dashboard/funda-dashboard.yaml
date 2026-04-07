@@ -1,0 +1,154 @@
+# ============================================================
+# Funda Tracker Dashboard
+# ============================================================
+# Add via HA UI: Settings → Dashboards → Add Dashboard → YAML
+# Or paste cards individually into an existing dashboard.
+#
+# Requires: HACS ApexCharts card (for the history graph)
+# Install: HACS → Frontend → Search "apexcharts-card" → Install
+# ============================================================
+
+title: Funda Tracker
+icon: mdi:home-analytics
+path: funda
+cards:
+  # --- Row 1: Value + Trend ---
+  - type: horizontal-stack
+    cards:
+      # 1. Big value card with trend
+      - type: custom:mushroom-entity-card
+        entity: sensor.funda_house_value
+        name: Woningwaarde
+        icon: mdi:home-analytics
+        primary_info: state
+        secondary_info: last-updated
+        layout: vertical
+        card_mod:
+          style: |
+            ha-card { font-size: 1.2em; }
+      # Fallback if no mushroom card:
+      # - type: entity
+      #   entity: sensor.funda_house_value
+      #   name: Woningwaarde
+
+      - type: entities
+        entities:
+          - entity: sensor.funda_delta_status
+            name: Trend deze maand
+          - entity: sensor.funda_betrouwbaarheid
+            name: Betrouwbaarheid
+          - entity: sensor.funda_ondergrens
+            name: Ondergrens
+          - entity: sensor.funda_bovengrens
+            name: Bovengrens
+
+  # --- Row 2: History graph (requires apexcharts-card from HACS) ---
+  - type: custom:apexcharts-card
+    header:
+      title: Waardecheck Historie
+      show: true
+    graph_span: 12month
+    span:
+      end: now
+    yaxis:
+      - id: value
+        min: ~500000
+        max: ~650000
+        apex_config:
+          labels:
+            formatter: |
+              EVAL:function(val) { return '€' + (val/1000).toFixed(0) + 'k'; }
+    series:
+      - entity: sensor.funda_house_value
+        name: Waarde
+        type: line
+        color: "#1976D2"
+        stroke_width: 3
+        yaxis_id: value
+        group_by:
+          func: last
+          duration: 30d
+      - entity: sensor.funda_bovengrens
+        name: Bovengrens
+        type: area
+        color: "#90CAF9"
+        opacity: 0.15
+        stroke_width: 0
+        yaxis_id: value
+        group_by:
+          func: last
+          duration: 30d
+      - entity: sensor.funda_ondergrens
+        name: Ondergrens
+        type: area
+        color: "#FFFFFF"
+        opacity: 1
+        stroke_width: 0
+        yaxis_id: value
+        group_by:
+          func: last
+          duration: 30d
+
+  # --- Row 3: Stats ---
+  - type: horizontal-stack
+    cards:
+      # 3. Stats summary
+      - type: entities
+        title: Statistieken
+        entities:
+          - entity: sensor.funda_maandwijziging
+            name: Maandwijziging
+          - entity: sensor.funda_maandwijziging_pct
+            name: Maandwijziging %
+          - entity: sensor.funda_jaarwijziging
+            name: Jaarwijziging
+          - entity: sensor.funda_jaarwijziging_pct
+            name: Jaarwijziging %
+          - entity: sensor.funda_all_time_high
+            name: All-time high
+          - entity: sensor.funda_all_time_low
+            name: All-time low
+          - entity: sensor.funda_prijs_per_m2
+            name: Prijs per m²
+
+      # 9 + 10. Finance trackers
+      - type: entities
+        title: Financiën
+        entities:
+          - entity: input_number.funda_purchase_price
+            name: Aankoopprijs
+          - entity: input_number.funda_mortgage_balance
+            name: Hypotheek restschuld
+          - entity: sensor.funda_overwaarde
+            name: Overwaarde
+          - entity: sensor.funda_winst
+            name: Winst sinds aankoop
+          - entity: sensor.funda_roi
+            name: ROI
+
+  # --- Row 4: Building info + Alerts ---
+  - type: horizontal-stack
+    cards:
+      # 4. Building info
+      - type: markdown
+        title: Woning
+        content: >
+          **{{ state_attr('sensor.funda_house_value', 'address') }}**
+
+          | | |
+          |---|---|
+          | 🏠 Type | {{ state_attr('sensor.funda_house_value', 'building_type') }} |
+          | 📐 Woonoppervlakte | {{ state_attr('sensor.funda_house_value', 'floor_size') }} m² |
+          | 🌳 Perceeloppervlakte | {{ state_attr('sensor.funda_house_value', 'plot_size') }} m² |
+          | 📅 Bouwjaar | {{ state_attr('sensor.funda_house_value', 'year_of_construction') }} |
+          | ✨ Onderhoud | {{ state_attr('sensor.funda_house_value', 'maintenance_state') }} |
+          | 📍 Buurt | {{ state_attr('sensor.funda_house_value', 'neighbourhood') }}, {{ state_attr('sensor.funda_house_value', 'city') }} |
+
+      # 6. Alert thresholds
+      - type: entities
+        title: Alerts
+        entities:
+          - entity: input_number.funda_value_alert_high
+            name: Melding bij waarde boven
+          - entity: input_number.funda_value_alert_low
+            name: Melding bij waarde onder

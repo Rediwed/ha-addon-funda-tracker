@@ -1,0 +1,297 @@
+# ============================================================
+# Funda Tracker — Home Assistant package
+# ============================================================
+# /config/packages/funda.yaml
+#
+# Provides: template sensors, input helpers, automations,
+# and everything needed for the Funda Tracker dashboard.
+# ============================================================
+
+# --- Input helpers for user-configurable values ---
+input_number:
+  funda_purchase_price:
+    name: "Funda Aankoopprijs"
+    icon: mdi:cash
+    min: 0
+    max: 5000000
+    step: 1000
+    unit_of_measurement: "€"
+    mode: box
+
+  funda_mortgage_balance:
+    name: "Funda Hypotheek Restschuld"
+    icon: mdi:bank
+    min: 0
+    max: 5000000
+    step: 1000
+    unit_of_measurement: "€"
+    mode: box
+
+  funda_value_alert_high:
+    name: "Funda Bovengrens Alert"
+    icon: mdi:arrow-up-bold-circle
+    min: 0
+    max: 5000000
+    step: 5000
+    unit_of_measurement: "€"
+    mode: box
+
+  funda_value_alert_low:
+    name: "Funda Ondergrens Alert"
+    icon: mdi:arrow-down-bold-circle
+    min: 0
+    max: 5000000
+    step: 5000
+    unit_of_measurement: "€"
+    mode: box
+
+template:
+  - sensor:
+      # --- 1. Monthly change (absolute) ---
+      - name: "Funda Maandwijziging"
+        unique_id: funda_monthly_change
+        state: >
+          {{ state_attr('sensor.funda_house_value', 'monthly_change') | default(0) | int }}
+        unit_of_measurement: "€"
+        icon: >
+          {% set val = state_attr('sensor.funda_house_value', 'monthly_change') | default(0) | int %}
+          {{ 'mdi:trending-up' if val >= 0 else 'mdi:trending-down' }}
+        availability: >
+          {{ state_attr('sensor.funda_house_value', 'monthly_change') is not none }}
+
+      # --- 2. Monthly change (percentage) ---
+      - name: "Funda Maandwijziging %"
+        unique_id: funda_monthly_change_pct
+        state: >
+          {{ state_attr('sensor.funda_house_value', 'monthly_change_pct') | default(0) | round(2) }}
+        unit_of_measurement: "%"
+        icon: mdi:percent
+        availability: >
+          {{ state_attr('sensor.funda_house_value', 'monthly_change_pct') is not none }}
+
+      # --- 3. Yearly change (absolute) ---
+      - name: "Funda Jaarwijziging"
+        unique_id: funda_yearly_change
+        state: >
+          {{ state_attr('sensor.funda_house_value', 'yearly_change') | default(0) | int }}
+        unit_of_measurement: "€"
+        icon: mdi:chart-line
+        availability: >
+          {{ state_attr('sensor.funda_house_value', 'yearly_change') is not none }}
+
+      # --- 4. Yearly change (percentage) ---
+      - name: "Funda Jaarwijziging %"
+        unique_id: funda_yearly_change_pct
+        state: >
+          {{ state_attr('sensor.funda_house_value', 'yearly_change_pct') | default(0) | round(2) }}
+        unit_of_measurement: "%"
+        icon: mdi:percent
+        availability: >
+          {{ state_attr('sensor.funda_house_value', 'yearly_change_pct') is not none }}
+
+      # --- 5. All-time high ---
+      - name: "Funda All-Time High"
+        unique_id: funda_all_time_high
+        state: >
+          {{ state_attr('sensor.funda_house_value', 'all_time_high') | default(0) | int }}
+        unit_of_measurement: "€"
+        icon: mdi:arrow-up-bold
+
+      # --- 6. All-time low ---
+      - name: "Funda All-Time Low"
+        unique_id: funda_all_time_low
+        state: >
+          {{ state_attr('sensor.funda_house_value', 'all_time_low') | default(0) | int }}
+        unit_of_measurement: "€"
+        icon: mdi:arrow-down-bold
+
+      # --- 7. Value range (lower bound) ---
+      - name: "Funda Ondergrens"
+        unique_id: funda_lower_bound
+        state: >
+          {{ state_attr('sensor.funda_house_value', 'lower_bound') | default(0) | int }}
+        unit_of_measurement: "€"
+        icon: mdi:arrow-collapse-down
+
+      # --- 8. Value range (upper bound) ---
+      - name: "Funda Bovengrens"
+        unique_id: funda_upper_bound
+        state: >
+          {{ state_attr('sensor.funda_house_value', 'upper_bound') | default(0) | int }}
+        unit_of_measurement: "€"
+        icon: mdi:arrow-collapse-up
+
+      # --- 9. Confidence level ---
+      - name: "Funda Betrouwbaarheid"
+        unique_id: funda_confidence
+        state: >
+          {{ state_attr('sensor.funda_house_value', 'confidence_level') | default('Onbekend') }}
+        icon: >
+          {% set lvl = state_attr('sensor.funda_house_value', 'confidence_level') | default('') %}
+          {% if lvl == 'High' %}mdi:shield-check
+          {% elif lvl == 'Medium' %}mdi:shield-half-full
+          {% else %}mdi:shield-alert{% endif %}
+
+      # --- 10. Price per m² ---
+      - name: "Funda Prijs per m²"
+        unique_id: funda_price_per_m2
+        state: >
+          {% set value = states('sensor.funda_house_value') | int(0) %}
+          {% set floor = state_attr('sensor.funda_house_value', 'floor_size') | int(0) %}
+          {{ (value / floor) | round(0) if floor > 0 else 0 }}
+        unit_of_measurement: "€/m²"
+        icon: mdi:ruler-square
+
+      # --- 11. Equity (value - mortgage) ---
+      - name: "Funda Overwaarde"
+        unique_id: funda_equity
+        state: >
+          {% set value = states('sensor.funda_house_value') | int(0) %}
+          {% set mortgage = states('input_number.funda_mortgage_balance') | int(0) %}
+          {{ value - mortgage }}
+        unit_of_measurement: "€"
+        icon: mdi:piggy-bank
+        availability: >
+          {{ states('input_number.funda_mortgage_balance') | int(0) > 0 }}
+
+      # --- 12. Profit since purchase ---
+      - name: "Funda Winst"
+        unique_id: funda_profit
+        state: >
+          {% set value = states('sensor.funda_house_value') | int(0) %}
+          {% set purchase = states('input_number.funda_purchase_price') | int(0) %}
+          {{ value - purchase }}
+        unit_of_measurement: "€"
+        icon: >
+          {% set value = states('sensor.funda_house_value') | int(0) %}
+          {% set purchase = states('input_number.funda_purchase_price') | int(0) %}
+          {{ 'mdi:trending-up' if value >= purchase else 'mdi:trending-down' }}
+        availability: >
+          {{ states('input_number.funda_purchase_price') | int(0) > 0 }}
+
+      # --- 13. ROI since purchase ---
+      - name: "Funda ROI"
+        unique_id: funda_roi
+        state: >
+          {% set value = states('sensor.funda_house_value') | int(0) %}
+          {% set purchase = states('input_number.funda_purchase_price') | int(0) %}
+          {{ ((value - purchase) / purchase * 100) | round(1) if purchase > 0 else 0 }}
+        unit_of_measurement: "%"
+        icon: mdi:chart-areaspline
+        availability: >
+          {{ states('input_number.funda_purchase_price') | int(0) > 0 }}
+
+      # --- 14. Delta status text ---
+      - name: "Funda Delta Status"
+        unique_id: funda_delta_status
+        state: >
+          {% set delta = state_attr('sensor.funda_house_value', 'delta_pct') %}
+          {% set status = state_attr('sensor.funda_house_value', 'delta_status') %}
+          {% if delta is not none %}{{ delta }}% {{ status | default('') }}{% else %}Onbekend{% endif %}
+        icon: >
+          {% set status = state_attr('sensor.funda_house_value', 'delta_status') | default('') %}
+          {% if status == 'Increased' %}mdi:arrow-up{% elif status == 'Decreased' %}mdi:arrow-down{% else %}mdi:minus{% endif %}
+
+# --- Automations ---
+automation:
+  # 5. Monthly value notification
+  - alias: "Funda waarde update notificatie"
+    id: funda_value_update_notification
+    trigger:
+      - platform: state
+        entity_id: sensor.funda_house_value
+    condition:
+      - condition: template
+        value_template: >
+          {{ trigger.from_state.state not in ['unknown', 'unavailable']
+             and trigger.from_state.state != trigger.to_state.state }}
+    action:
+      - service: notify.notify
+        data:
+          title: "🏠 Funda Woningwaarde Update"
+          message: >
+            Nieuwe waarde: €{{ '{:,}'.format(states('sensor.funda_house_value') | int) }}
+            {% if state_attr('sensor.funda_house_value', 'monthly_change') is not none %}
+            Maandwijziging: €{{ '{:,}'.format(state_attr('sensor.funda_house_value', 'monthly_change') | int) }} ({{ state_attr('sensor.funda_house_value', 'monthly_change_pct') }}%)
+            {% endif %}
+            {% if state_attr('sensor.funda_house_value', 'delta_pct') is not none %}
+            Delta: {{ state_attr('sensor.funda_house_value', 'delta_pct') }}% ({{ state_attr('sensor.funda_house_value', 'delta_status') }})
+            {% endif %}
+    mode: single
+
+  # 6. Threshold alert — value crosses configured high/low
+  - alias: "Funda waarde bovengrens alert"
+    id: funda_threshold_high_alert
+    trigger:
+      - platform: template
+        value_template: >
+          {{ states('sensor.funda_house_value') | int(0) >= states('input_number.funda_value_alert_high') | int(0)
+             and states('input_number.funda_value_alert_high') | int(0) > 0 }}
+    action:
+      - service: notify.notify
+        data:
+          title: "🏠📈 Woningwaarde boven doelgrens!"
+          message: >
+            Je woning is nu €{{ '{:,}'.format(states('sensor.funda_house_value') | int) }} waard — boven je ingestelde grens van €{{ '{:,}'.format(states('input_number.funda_value_alert_high') | int) }}.
+    mode: single
+
+  - alias: "Funda waarde ondergrens alert"
+    id: funda_threshold_low_alert
+    trigger:
+      - platform: template
+        value_template: >
+          {{ states('sensor.funda_house_value') | int(0) <= states('input_number.funda_value_alert_low') | int(0)
+             and states('input_number.funda_value_alert_low') | int(0) > 0 }}
+    action:
+      - service: notify.notify
+        data:
+          title: "🏠📉 Woningwaarde onder doelgrens!"
+          message: >
+            Je woning is nu €{{ '{:,}'.format(states('sensor.funda_house_value') | int) }} waard — onder je ingestelde grens van €{{ '{:,}'.format(states('input_number.funda_value_alert_low') | int) }}.
+    mode: single
+
+  # 7. Significant change alert (>2% in one month)
+  - alias: "Funda significante wijziging alert"
+    id: funda_significant_change_alert
+    trigger:
+      - platform: state
+        entity_id: sensor.funda_house_value
+    condition:
+      - condition: template
+        value_template: >
+          {% set pct = state_attr('sensor.funda_house_value', 'monthly_change_pct') %}
+          {{ pct is not none and (pct | float > 2.0 or pct | float < -2.0) }}
+    action:
+      - service: notify.notify
+        data:
+          title: "🏠⚠️ Ongewone waardeverandering!"
+          message: >
+            {% set pct = state_attr('sensor.funda_house_value', 'monthly_change_pct') | float %}
+            {% set change = state_attr('sensor.funda_house_value', 'monthly_change') | int %}
+            Je woningwaarde is {{ 'gestegen' if pct > 0 else 'gedaald' }} met {{ pct | abs }}% (€{{ '{:,}'.format(change | abs) }}) — dat is meer dan normaal.
+    mode: single
+
+  # 8. Yearly summary on January 1st
+  - alias: "Funda jaarsamenvatting"
+    id: funda_yearly_summary
+    trigger:
+      - platform: time
+        at: "10:00:00"
+    condition:
+      - condition: template
+        value_template: "{{ now().month == 1 and now().day == 1 }}"
+    action:
+      - service: notify.notify
+        data:
+          title: "🏠🎉 Jaarsamenvatting Woningwaarde"
+          message: >
+            Huidige waarde: €{{ '{:,}'.format(states('sensor.funda_house_value') | int) }}
+            {% if state_attr('sensor.funda_house_value', 'yearly_change') is not none %}
+            Jaarwijziging: €{{ '{:,}'.format(state_attr('sensor.funda_house_value', 'yearly_change') | int) }} ({{ state_attr('sensor.funda_house_value', 'yearly_change_pct') }}%)
+            {% endif %}
+            All-time high: €{{ '{:,}'.format(state_attr('sensor.funda_house_value', 'all_time_high') | int) }}
+            All-time low: €{{ '{:,}'.format(state_attr('sensor.funda_house_value', 'all_time_low') | int) }}
+            {% if states('input_number.funda_purchase_price') | int(0) > 0 %}
+            Winst sinds aankoop: €{{ '{:,}'.format(states('sensor.funda_winst') | int) }} ({{ states('sensor.funda_roi') }}%)
+            {% endif %}
+    mode: single
