@@ -86,7 +86,9 @@ Home Assistant add-on that tracks your house value from [Funda Mijn Huis](https:
 
 ## Dashboard
 
-A ready-to-use dashboard is included at `ha/dashboard/funda-dashboard.yaml`.
+A ready-to-use dashboard is included in this repo. Copy the YAML from GitHub:
+
+👉 **[funda-dashboard.yaml](https://github.com/Rediwed/ha-addon-funda-tracker/blob/main/ha/dashboard/funda-dashboard.yaml)**
 
 ### Prerequisites
 
