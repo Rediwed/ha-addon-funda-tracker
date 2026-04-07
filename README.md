@@ -86,7 +86,28 @@ Home Assistant add-on that tracks your house value from [Funda Mijn Huis](https:
 
 ## Dashboard
 
-A ready-to-use dashboard YAML is included at `ha/dashboard/funda-dashboard.yaml`. Requires [apexcharts-card](https://github.com/RomRider/apexcharts-card) from HACS for the history graph.
+A ready-to-use dashboard is included at `ha/dashboard/funda-dashboard.yaml`.
+
+### Prerequisites
+
+Install [apexcharts-card](https://github.com/RomRider/apexcharts-card) from HACS for the history graph:
+1. Go to **HACS → Frontend → Search "apexcharts-card" → Install**
+2. Restart HA
+
+### Option A: Add as a new dashboard
+
+1. Go to **Settings → Dashboards → Add Dashboard**
+2. Choose **"New dashboard from scratch"**
+3. Give it a name (e.g. "Funda") and click **Create**
+4. Open the new dashboard → click **⋮ → Edit Dashboard → ⋮ → Raw configuration editor**
+5. Paste the contents of `ha/dashboard/funda-dashboard.yaml`
+6. Click **Save**
+
+### Option B: Add cards to an existing dashboard
+
+1. Open your dashboard → click **⋮ → Edit Dashboard → + Add Card**
+2. Choose **Manual** (YAML) at the bottom
+3. Copy individual cards from `ha/dashboard/funda-dashboard.yaml` and paste them one by one
 
 ## How it works
 
