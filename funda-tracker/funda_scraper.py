@@ -399,54 +399,62 @@ def import_statistics(estimates):
 
     log.info("Importing %d historical data points into HA statistics...", len(history))
 
-    stats = []
+    # Build stats for each data point
+    entries = []
     for h in history:
         date_str = h.get("date", "")
         if not date_str:
             continue
-        # Parse date and create an ISO timestamp at midnight UTC
         try:
             dt = datetime.strptime(date_str[:10], "%Y-%m-%d")
             ts = dt.strftime("%Y-%m-%dT00:00:00+00:00")
         except ValueError:
             continue
-
-        stats.append({
+        entries.append({
             "start": ts,
-            "mean": h["value"],
-            "min": h.get("lowerBound", h["value"]),
-            "max": h.get("upperBound", h["value"]),
+            "value": h["value"],
+            "lower": h.get("lowerBound", h["value"]),
+            "upper": h.get("upperBound", h["value"]),
         })
 
-    if not stats:
+    if not entries:
         return True
 
-    payload = {
-        "has_mean": True,
-        "has_sum": False,
-        "name": "Funda Woningwaarde",
-        "source": "recorder",
-        "statistic_id": "sensor.funda_house_value",
-        "unit_of_measurement": "EUR",
-        "stats": stats,
-    }
+    # Import stats for main sensor + bounds sensors
+    sensors = [
+        ("sensor.funda_house_value", "Funda Woningwaarde", [({"start": e["start"], "mean": e["value"], "min": e["lower"], "max": e["upper"]}) for e in entries]),
+        ("sensor.funda_ondergrens", "Funda Ondergrens", [{"start": e["start"], "mean": e["lower"], "min": e["lower"], "max": e["lower"]} for e in entries]),
+        ("sensor.funda_bovengrens", "Funda Bovengrens", [{"start": e["start"], "mean": e["upper"], "min": e["upper"], "max": e["upper"]} for e in entries]),
+    ]
 
-    try:
-        resp = std_requests.post(
-            "http://supervisor/core/api/services/recorder/import_statistics",
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json=payload,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        log.info("Imported %d historical statistics into HA.", len(stats))
-        for s in stats:
-            log.info("  %s: EUR %s (min EUR %s, max EUR %s)",
-                     s["start"][:10], f"{s['mean']:,}", f"{s['min']:,}", f"{s['max']:,}")
-        return True
-    except std_requests.RequestException as exc:
-        log.error("Statistics import failed: %s", exc)
-        return False
+    success = True
+    for statistic_id, name, stats in sensors:
+        payload = {
+            "has_mean": True,
+            "has_sum": False,
+            "name": name,
+            "source": "recorder",
+            "statistic_id": statistic_id,
+            "unit_of_measurement": "€",
+            "stats": stats,
+        }
+        try:
+            resp = std_requests.post(
+                "http://supervisor/core/api/services/recorder/import_statistics",
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            log.info("Imported %d stats for %s", len(stats), statistic_id)
+        except std_requests.RequestException as exc:
+            log.error("Statistics import failed for %s: %s", statistic_id, exc)
+            success = False
+
+    for e in entries:
+        log.info("  %s: EUR %s (EUR %s - EUR %s)", e["start"][:10], f"{e['value']:,}", f"{e['lower']:,}", f"{e['upper']:,}")
+
+    return success
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.4 (2026-04-07)
+- Import statistics for bounds sensors (ondergrens/bovengrens) so ApexCharts shows full history
+- Fix dashboard markdown card (table → list format)
+- Fix ApexCharts card: use statistics mode for long-term data
+
 ## 0.9.3 (2026-04-07)
 - Split finance tracking: market gain (vs purchase price) + total profit (vs total investment)
 - New helpers: Totale Investering (purchase + renovation + loans + cash)
