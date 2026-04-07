@@ -71,7 +71,7 @@ Home Assistant add-on that tracks your house value from [Funda Mijn Huis](https:
 | `input_number.funda_value_alert_high` | Get notified when value rises above this |
 | `input_number.funda_value_alert_low` | Get notified when value drops below this |
 
-> **Finance example:** You bought a house for €350k, then spent €100k renovation (mortgage), €20k green loan, and €30k cash. Set **Aankoopprijs** = 350000 and **Totale Investering** = 500000. Market ROI shows how the housing market performed, while Total ROI shows your actual return including all costs.
+> **Finance example:** You bought a house for €350k, then spent €100k renovation (mortgage), €20k green loan, and €30k cash. Set **Aankoopprijs** = 350000 and **Totale Investering** = 500000. If the current value is €475k: Market ROI = +35.7%, Total ROI = −5.0%.
 
 > **Note:** Finance sensors only appear once you set the corresponding helper to a value > 0. Go to **Settings → Devices & Services → Helpers**.
 
