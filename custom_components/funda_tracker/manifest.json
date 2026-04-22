@@ -1,0 +1,10 @@
+{
+  "domain": "funda_tracker",
+  "name": "Funda Tracker",
+  "codeowners": ["@Rediwed"],
+  "config_flow": true,
+  "documentation": "https://github.com/Rediwed/ha-addon-funda-tracker",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/Rediwed/ha-addon-funda-tracker/issues",
+  "version": "1.0.0"
+}

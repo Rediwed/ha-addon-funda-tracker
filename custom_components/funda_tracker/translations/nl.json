@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Funda Tracker",
+        "description": "Deze integratie leest gegevens van de Funda Tracker add-on. Zorg dat de add-on is geïnstalleerd en minstens één keer heeft gescraped.",
+        "data": {}
+      }
+    },
+    "abort": {
+      "already_configured": "Funda Tracker is al geconfigureerd."
+    }
+  }
+}

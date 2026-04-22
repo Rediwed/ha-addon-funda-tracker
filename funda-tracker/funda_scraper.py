@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse, unquote
@@ -28,6 +29,7 @@ log = logging.getLogger(__name__)
 
 DATA_DIR = Path(os.environ.get("FUNDA_DATA_DIR", "/data"))
 HISTORY_FILE = DATA_DIR / "history.json"
+SHARE_DIR = Path("/share/funda_tracker")
 
 FUNDA_BASE = "https://www.funda.nl"
 FUNDA_LOGIN_START = f"{FUNDA_BASE}/mijn/inloggen/"
@@ -423,19 +425,43 @@ def push_to_homeassistant(value, stats, address, delta, home, estimates):
     for entity_id, state, attrs in sensors:
         # Remove None values from attrs
         clean_attrs = {k: v for k, v in attrs.items() if v is not None}
-        try:
-            resp = std_requests.post(
-                f"http://supervisor/core/api/states/{entity_id}",
-                headers=headers,
-                json={"state": state, "attributes": clean_attrs},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            pushed += 1
-        except std_requests.RequestException as exc:
-            log.error("Failed to push %s: %s", entity_id, exc)
+        for attempt in range(3):
+            try:
+                resp = std_requests.post(
+                    f"http://supervisor/core/api/states/{entity_id}",
+                    headers=headers,
+                    json={"state": state, "attributes": clean_attrs},
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                pushed += 1
+                break
+            except std_requests.RequestException as exc:
+                if attempt < 2:
+                    wait = 5 * (attempt + 1)
+                    log.warning("Push %s attempt %d failed: %s — retrying in %ds", entity_id, attempt + 1, exc, wait)
+                    time.sleep(wait)
+                else:
+                    log.error("Failed to push %s after 3 attempts: %s", entity_id, exc)
 
     log.info("Pushed %d/%d sensors to HA.", pushed, len(sensors))
+
+    # Save sensor data to shared directory for the custom integration
+    try:
+        SHARE_DIR.mkdir(parents=True, exist_ok=True)
+        sensor_data = {
+            "last_updated": datetime.now().isoformat(),
+            "sensors": {
+                eid: {"state": state, "attributes": {k: v for k, v in attrs.items() if v is not None}}
+                for eid, state, attrs in sensors
+            },
+        }
+        with open(SHARE_DIR / "sensors.json", "w") as f:
+            json.dump(sensor_data, f, indent=2)
+        log.info("Saved sensor data to %s/sensors.json", SHARE_DIR)
+    except OSError as exc:
+        log.warning("Could not save sensor data to share: %s", exc)
+
     return pushed > 0
 
 

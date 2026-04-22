@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Funda Tracker",
+        "description": "This integration reads data from the Funda Tracker add-on. Make sure the add-on is installed and has completed at least one scrape.",
+        "data": {}
+      }
+    },
+    "abort": {
+      "already_configured": "Funda Tracker is already configured."
+    }
+  }
+}

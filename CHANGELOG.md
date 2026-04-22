@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0 (2026-04-22)
+- **Custom integration** (`custom_components/funda_tracker/`) with `RestoreEntity` — sensors persist across HA restarts
+- Add-on now writes sensor data to `/share/funda_tracker/sensors.json` for the integration to read
+- 12 sensors grouped under a single "Funda Tracker" device in HA
+- Config flow with Dutch + English translations
+- HACS-ready: publishable as both add-on repository and custom integration
+- Add-on `/share` directory mapping added to config
+
+## 0.9.6 (2026-04-15)
+- Increase sensor push timeout from 10s to 30s to fix timeouts on HA Yellow
+- Add retry logic (3 attempts with backoff) for sensor pushes
+
 ## 0.9.5 (2026-04-07)
 - Push 12 individual sensors directly from scraper (no package needed for core sensors)
 - HA package now optional — only needed for finance sensors + automations
