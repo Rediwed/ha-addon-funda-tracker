@@ -1,6 +1,6 @@
 name: "Funda Tracker"
 description: "Scrapes your estimated house value from Funda Mijn Huis and tracks it as a sensor"
-version: "1.0.0"
+version: "1.0.1"
 slug: funda-tracker
 url: "https://github.com/Rediwed/ha-addon-funda-tracker"
 arch:

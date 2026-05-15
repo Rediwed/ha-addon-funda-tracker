@@ -181,6 +181,12 @@ def fetch_waardecheck(session):
     # Get valuation data (v2 has history + current estimate)
     log.info("Fetching Waardecheck from API...")
     resp = session.get(f"{WAARDECHECK_API}/v2/estimates", headers=headers)
+    if resp.status_code == 404:
+        log.error("  v2/estimates returned 404 -- it looks like you haven't")
+        log.error("  configured your house yet on Funda Mijn Huis.")
+        log.error("  Go to https://www.funda.nl/mijn-huis/ , add your address")
+        log.error("  and complete the Waardecheck wizard, then restart this add-on.")
+        return None
     if resp.status_code != 200:
         log.error("  v2/estimates failed: %d", resp.status_code)
         return None

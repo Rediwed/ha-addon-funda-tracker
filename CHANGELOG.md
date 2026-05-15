@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.0.1 (2026-05-15)
+- Detect 404 from Waardecheck API and log a clear message telling the user to configure their house on Funda Mijn Huis first
+
 ## 1.0.0 (2026-04-22)
 - **Custom integration** (`custom_components/funda_tracker/`) with `RestoreEntity` — sensors persist across HA restarts
 - Add-on now writes sensor data to `/share/funda_tracker/sensors.json` for the integration to read
