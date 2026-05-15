@@ -15,12 +15,13 @@ Home Assistant add-on that tracks your house value from [Funda Mijn Huis](https:
 
 ## Installation
 
-1. In HA, go to **Settings → Add-ons → Add-on Store → ⋮ → Repositories**
-2. Add: `https://github.com/Rediwed/ha-addon-funda-tracker`
-3. Find **Funda Tracker** and click **Install**
-4. Go to **Configuration** and enter your Funda email + password
-5. **Start** the add-on — all core sensors are created automatically
-6. *(Optional)* For finance tracking + automations: copy `ha/packages/funda.yaml` to `/config/packages/funda.yaml` and reload YAML
+[![Open your Home Assistant instance and show the add add-on repository dialog with a specific repository URL pre-filled.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FRediwed%2Fha-addon-funda-tracker)
+
+1. Click the badge above (or in HA, go to **Settings → Add-ons → Add-on Store → ⋮ → Repositories** and add `https://github.com/Rediwed/ha-addon-funda-tracker`)
+2. Find **Funda Tracker** and click **Install**
+3. Go to **Configuration** and enter your Funda email + password
+4. **Start** the add-on — all core sensors are created automatically
+5. *(Optional)* For finance tracking + automations: copy `ha/packages/funda.yaml` to `/config/packages/funda.yaml` and reload YAML
 
 ## Configuration
 
