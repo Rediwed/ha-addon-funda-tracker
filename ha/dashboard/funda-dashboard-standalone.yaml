@@ -1,0 +1,171 @@
+# ============================================================
+# Funda Tracker Dashboard — Standalone (paste into web GUI)
+# ============================================================
+# Use this when creating a NEW dashboard:
+# 1. Settings → Dashboards → Add dashboard → New dashboard from scratch
+# 2. Open the new dashboard → ⋮ → Edit dashboard → ⋮ → Raw configuration editor
+# 3. Replace ALL contents with this file
+#
+# If you want to add it as a view to an existing dashboard,
+# use funda-dashboard.yaml instead.
+#
+# Requires: apexcharts-card from HACS
+# ============================================================
+title: Funda Tracker
+views:
+  - type: sections
+    max_columns: 4
+    title: Funda Tracker
+    path: funda
+    icon: mdi:home-analytics
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Woningwaarde
+            heading_style: title
+            icon: mdi:home-analytics
+            badges:
+              - type: entity
+                entity: sensor.funda_delta_status
+              - type: entity
+                entity: sensor.funda_betrouwbaarheid
+          - type: tile
+            entity: sensor.funda_house_value
+            name: Huidige waarde
+          - type: tile
+            entity: sensor.funda_ondergrens
+            name: Ondergrens
+          - type: tile
+            entity: sensor.funda_bovengrens
+            name: Bovengrens
+          - type: tile
+            entity: sensor.funda_prijs_per_m2
+            name: Prijs per m²
+          - type: custom:apexcharts-card
+            header:
+              title: Waardecheck Historie
+              show: true
+            graph_span: 12month
+            span:
+              end: now
+            yaxis:
+              - id: value
+                min: ~500000
+                max: ~650000
+                apex_config:
+                  labels:
+                    formatter: |
+                      EVAL:function(val) { return '€' + (val/1000).toFixed(0) + 'k'; }
+            series:
+              - entity: sensor.funda_house_value
+                name: Waarde
+                type: line
+                color: "#1976D2"
+                stroke_width: 3
+                yaxis_id: value
+                statistics:
+                  type: mean
+                  period: month
+              - entity: sensor.funda_bovengrens
+                name: Bovengrens
+                type: area
+                color: "#90CAF9"
+                opacity: 0.15
+                stroke_width: 0
+                yaxis_id: value
+                statistics:
+                  type: mean
+                  period: month
+              - entity: sensor.funda_ondergrens
+                name: Ondergrens
+                type: area
+                color: "#FFFFFF"
+                opacity: 1
+                stroke_width: 0
+                yaxis_id: value
+                statistics:
+                  type: mean
+                  period: month
+            grid_options:
+              columns: full
+              rows: 4
+      - type: grid
+        cards:
+          - type: heading
+            heading: Statistieken
+            heading_style: title
+            icon: mdi:chart-line
+          - type: tile
+            entity: sensor.funda_maandwijziging
+            name: Maandwijziging
+          - type: tile
+            entity: sensor.funda_maandwijziging_pct
+            name: Maandwijziging %
+          - type: tile
+            entity: sensor.funda_jaarwijziging
+            name: Jaarwijziging
+          - type: tile
+            entity: sensor.funda_jaarwijziging_pct
+            name: Jaarwijziging %
+          - type: tile
+            entity: sensor.funda_all_time_high
+            name: All-time high
+          - type: tile
+            entity: sensor.funda_all_time_low
+            name: All-time low
+      - type: grid
+        cards:
+          - type: heading
+            heading: Financiën
+            heading_style: title
+            icon: mdi:cash-multiple
+          - type: tile
+            entity: input_number.funda_purchase_price
+            name: Aankoopprijs
+          - type: tile
+            entity: input_number.funda_total_investment
+            name: Totale investering
+          - type: tile
+            entity: input_number.funda_mortgage_balance
+            name: Hypotheek restschuld
+          - type: tile
+            entity: sensor.funda_overwaarde
+            name: Overwaarde
+          - type: tile
+            entity: sensor.funda_marktwinst
+            name: Marktwinst
+          - type: tile
+            entity: sensor.funda_markt_roi
+            name: Markt ROI
+          - type: tile
+            entity: sensor.funda_totale_winst
+            name: Totale winst
+          - type: tile
+            entity: sensor.funda_totale_roi
+            name: Totale ROI
+      - type: grid
+        cards:
+          - type: heading
+            heading: Woning
+            heading_style: title
+            icon: mdi:home-city
+          - type: markdown
+            content: |
+              **{{ state_attr('sensor.funda_house_value', 'address') }}**
+
+              🏠 **Type:** {{ state_attr('sensor.funda_house_value', 'building_type') }}
+              📐 **Woonoppervlakte:** {{ state_attr('sensor.funda_house_value', 'floor_size') }} m²
+              🌳 **Perceeloppervlakte:** {{ state_attr('sensor.funda_house_value', 'plot_size') }} m²
+              📅 **Bouwjaar:** {{ state_attr('sensor.funda_house_value', 'year_of_construction') }}
+              ✨ **Onderhoud:** {{ state_attr('sensor.funda_house_value', 'maintenance_state') }}
+              📍 **Buurt:** {{ state_attr('sensor.funda_house_value', 'neighbourhood') }}, {{ state_attr('sensor.funda_house_value', 'city') }}
+          - type: heading
+            heading: Alerts
+            heading_style: subtitle
+          - type: tile
+            entity: input_number.funda_value_alert_high
+            name: Melding boven
+          - type: tile
+            entity: input_number.funda_value_alert_low
+            name: Melding onder
