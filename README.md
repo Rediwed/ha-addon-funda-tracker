@@ -8,8 +8,10 @@ Home Assistant add-on that tracks your house value from [Funda Mijn Huis](https:
 - Uses `curl_cffi` for Chrome TLS fingerprint impersonation (bypasses anti-bot)
 - Current value + confidence level + upper/lower bounds
 - 12-month historical data imported into HA long-term statistics
-- Monthly scheduling (configurable day/hour)
-- Template sensors for monthly/yearly change, all-time high/low, price per m², and more
+- Monthly scheduling one day after Funda's expected publication date, randomized between 09:00 and 21:00
+- Persistent Home Assistant notification on scrape failure, cleared automatically after recovery
+- Persistent custom-integration sensors grouped under one Funda Tracker device
+- Monthly/yearly change, all-time high/low, price per m², and more
 - Finance helpers: purchase price, mortgage balance → equity, profit, ROI
 - Automations: monthly notification, threshold alerts, significant change alert, yearly summary
 
@@ -19,9 +21,11 @@ Home Assistant add-on that tracks your house value from [Funda Mijn Huis](https:
 
 1. Click the badge above (or in HA, go to **Settings → Add-ons → Add-on Store → ⋮ → Repositories** and add `https://github.com/Rediwed/ha-addon-funda-tracker`)
 2. Find **Funda Tracker** and click **Install**
-3. Go to **Configuration** and enter your Funda email + password
-4. **Start** the add-on — all core sensors are created automatically
-5. *(Optional)* For finance tracking + automations: copy `ha/packages/funda.yaml` to `/config/packages/funda.yaml` and reload YAML
+3. Install the custom integration through HACS (add this repository as category **Integration**) or copy `custom_components/funda_tracker` to `/config/custom_components/funda_tracker`
+4. Restart Home Assistant, then add **Funda Tracker** under **Settings → Devices & services**
+5. Open the add-on **Configuration** tab and enter your Funda email + password
+6. Start the add-on; it writes shared data that the integration exposes as persistent sensors
+7. *(Optional)* For finance tracking + automations: copy `ha/packages/funda.yaml` to `/config/packages/funda.yaml` and reload YAML
 
 ## Configuration
 
@@ -29,27 +33,37 @@ Home Assistant add-on that tracks your house value from [Funda Mijn Huis](https:
 |---|---|---|
 | `funda_email` | Your Funda account email | |
 | `funda_password` | Your Funda account password | |
-| `schedule_day` | Day of month to scrape (1–28) | `10` |
-| `schedule_hour` | Hour to scrape (0–23) | `10` |
+| `schedule_day` | Expected day of the month on which Funda publishes new data (1–28) | `10` |
+
+The add-on fetches the data on the following calendar day. It chooses a new time
+for each publication month from a truncated normal distribution centred on
+15:00 with a 3-hour standard deviation and hard limits of 09:00 and 21:00. The
+selected time is saved in `/data`, so restarting the add-on does not redraw it.
 
 ## Entities
 
-### Sensors (pushed directly by add-on — no package needed)
+### Sensors (provided by the custom integration)
 
 | Entity | Description |
 |---|---|
-| `sensor.funda_house_value` | Current estimated value with all data as attributes |
-| `sensor.funda_ondergrens` | Lower bound of estimate range |
-| `sensor.funda_bovengrens` | Upper bound of estimate range |
-| `sensor.funda_maandwijziging` | Monthly change in € |
-| `sensor.funda_maandwijziging_pct` | Monthly change in % |
-| `sensor.funda_jaarwijziging` | Year-over-year change in € |
-| `sensor.funda_jaarwijziging_pct` | Year-over-year change in % |
-| `sensor.funda_all_time_high` | Highest recorded value |
-| `sensor.funda_all_time_low` | Lowest recorded value |
-| `sensor.funda_betrouwbaarheid` | Confidence level (High/Medium/Low) |
-| `sensor.funda_prijs_per_m2` | Value per square meter |
-| `sensor.funda_delta_status` | Monthly delta percentage + direction |
+| `sensor.funda_tracker_woningwaarde` | Current estimated value with all data as attributes |
+| `sensor.funda_tracker_ondergrens` | Lower bound of estimate range |
+| `sensor.funda_tracker_bovengrens` | Upper bound of estimate range |
+| `sensor.funda_tracker_maandwijziging` | Monthly change in € |
+| `sensor.funda_tracker_maandwijziging_2` | Monthly change in % |
+| `sensor.funda_tracker_jaarwijziging` | Year-over-year change in € |
+| `sensor.funda_tracker_jaarwijziging_2` | Year-over-year change in % |
+| `sensor.funda_tracker_all_time_high` | Highest recorded value |
+| `sensor.funda_tracker_all_time_low` | Lowest recorded value |
+| `sensor.funda_tracker_betrouwbaarheid` | Confidence level (High/Medium/Low) |
+| `sensor.funda_tracker_prijs_per_m2` | Value per square meter |
+| `sensor.funda_tracker_delta_status` | Monthly delta percentage + direction |
+
+The main `sensor.funda_tracker_woningwaarde` entity keeps its last valid value
+when a scrape fails. Its `last_successful_update` attribute records when fresh
+data was last published, while `update_overdue` becomes `true` after 35 days.
+These are attributes because they describe the freshness of the valuation; a
+separate entity is not required for the built-in failure notification.
 
 ### Finance sensors (requires optional HA package)
 
@@ -114,18 +128,28 @@ Install [apexcharts-card](https://github.com/RomRider/apexcharts-card) from HACS
 ## How it works
 
 ```
-Login → /mijn/inloggen/ → login.funda.nl (OIDC) → session cookies
+Login → /mijn-huis/auth/oidc/signin/ → login.funda.nl (OIDC + PKCE) → session cookies
   ↓
 API   → GET /v2/estimates → current value + 12-month history
       → GET /v1/homes → address + building details
   ↓
-HA    → sensor.funda_house_value (Supervisor API)
-      → recorder.import_statistics (backfill history)
+File  → /share/funda_tracker/sensors.json (atomic write)
+  ↓
+HA    → Funda Tracker custom integration → sensor.funda_tracker_*
+  → recorder.import_statistics (backfill history)
+
+Schedule → publication day + 1 → random daytime target (09:00–21:00)
+  → failure: persistent HA notification + retry after at least 6 hours
+  → recovery: dismiss notification and schedule the next publication month
 ```
 
 ## Troubleshooting
 
-- **Login fails**: Check credentials in add-on Configuration
-- **No data**: Check the add-on Log tab for detailed step-by-step output
+- **Login fails**: Check credentials and the first failing step in the add-on Log tab
+- **No fresh data**: A failed scrape creates a persistent HA notification and retries after at least 6 hours within 09:00–21:00
+- **Retry while debugging**: Restart the add-on within 10 minutes while a failure is pending to run one immediate retry, even outside the normal daytime window
+- **Old `sensor.funda_*` entities unavailable**: Migrate dashboards, templates, and automations to `sensor.funda_tracker_*`
+- **Stale-data warning**: The integration has not received a valid shared data file for more than 35 days
+- **Entity remains available after failure**: The last valid valuation stays visible; inspect `last_successful_update` and `update_overdue` on the main entity
 - **Profit/ROI empty**: Set your purchase price in Settings → Helpers → Funda Aankoopprijs
 - **No history graph**: Install apexcharts-card from HACS

@@ -6,5 +6,5 @@
   "documentation": "https://github.com/Rediwed/ha-addon-funda-tracker",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Rediwed/ha-addon-funda-tracker/issues",
-  "version": "1.0.0"
+  "version": "1.0.2"
 }

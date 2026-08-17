@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -17,7 +18,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, STALE_DATA_AFTER
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,49 +76,79 @@ class FundaSensor(CoordinatorEntity, RestoreEntity, SensorEntity):
             model="Waardecheck",
             entry_type=DeviceEntryType.SERVICE,
         )
-        self._restored_state = None
-        self._restored_attrs = {}
+        self._last_known_state = None
+        self._last_known_attrs = {}
 
     async def async_added_to_hass(self) -> None:
         """Restore last known state when HA starts."""
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
         if last_state and last_state.state not in ("unknown", "unavailable"):
-            self._restored_state = last_state.state
-            self._restored_attrs = dict(last_state.attributes)
+            self._last_known_state = last_state.state
+            self._last_known_attrs = self._clean_attributes(last_state.attributes)
+        self._cache_coordinator_state()
+
+    @property
+    def available(self) -> bool:
+        """Keep the entity available while a last known value exists."""
+        return self._last_known_state is not None
 
     @property
     def native_value(self):
         """Return the sensor value from coordinator data, or restored state."""
-        data = self.coordinator.data or {}
-        sensors = data.get("sensors", {})
-        sensor = sensors.get(self._json_key)
-        if sensor:
-            return sensor.get("state")
-        return self._restored_state
+        return self._last_known_state
 
     @property
     def extra_state_attributes(self) -> dict:
         """Return extra attributes from coordinator data, or restored attributes."""
-        data = self.coordinator.data or {}
-        sensors = data.get("sensors", {})
-        sensor = sensors.get(self._json_key)
-        if sensor:
-            attrs = dict(sensor.get("attributes", {}))
-            # Remove attributes already handled by entity properties
-            attrs.pop("unit_of_measurement", None)
-            attrs.pop("friendly_name", None)
-            attrs.pop("icon", None)
-            attrs.pop("state_class", None)
-            return attrs
-        # Fall back to restored attributes (also cleaned)
-        attrs = dict(self._restored_attrs)
+        attrs = dict(self._last_known_attrs)
+        if self._json_key == "sensor.funda_house_value":
+            updated_at = self.coordinator.last_successful_update
+            if updated_at is None:
+                updated_at = self._parse_timestamp(
+                    attrs.get("last_successful_update") or attrs.get("last_scraped")
+                )
+
+            attrs["last_successful_update"] = (
+                updated_at.isoformat() if updated_at is not None else None
+            )
+            attrs["update_overdue"] = self._is_update_overdue(updated_at)
+        return attrs
+
+    @staticmethod
+    def _clean_attributes(source: dict) -> dict:
+        """Remove attributes managed by Home Assistant itself."""
+        attrs = dict(source)
         for key in ("unit_of_measurement", "friendly_name", "icon", "state_class",
                      "device_class", "restored"):
             attrs.pop(key, None)
         return attrs
 
+    @staticmethod
+    def _parse_timestamp(value) -> datetime | None:
+        try:
+            return datetime.fromisoformat(value) if value else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _is_update_overdue(updated_at: datetime | None) -> bool:
+        if updated_at is None:
+            return True
+        return datetime.now(updated_at.tzinfo) - updated_at > STALE_DATA_AFTER
+
+    def _cache_coordinator_state(self) -> None:
+        """Cache fresh coordinator data without clearing the last valid value."""
+        data = self.coordinator.data if isinstance(self.coordinator.data, dict) else {}
+        sensors = data.get("sensors", {})
+        sensor = sensors.get(self._json_key) if isinstance(sensors, dict) else None
+        if not isinstance(sensor, dict) or sensor.get("state") is None:
+            return
+        self._last_known_state = sensor["state"]
+        self._last_known_attrs = self._clean_attributes(sensor.get("attributes", {}))
+
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
+        self._cache_coordinator_state()
         self.async_write_ha_state()

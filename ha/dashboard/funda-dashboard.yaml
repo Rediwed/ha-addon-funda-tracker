@@ -23,20 +23,20 @@
           icon: mdi:home-analytics
           badges:
             - type: entity
-              entity: sensor.funda_delta_status
+              entity: sensor.funda_tracker_delta_status
             - type: entity
-              entity: sensor.funda_betrouwbaarheid
+              entity: sensor.funda_tracker_betrouwbaarheid
         - type: tile
-          entity: sensor.funda_house_value
+          entity: sensor.funda_tracker_woningwaarde
           name: Huidige waarde
         - type: tile
-          entity: sensor.funda_ondergrens
+          entity: sensor.funda_tracker_ondergrens
           name: Ondergrens
         - type: tile
-          entity: sensor.funda_bovengrens
+          entity: sensor.funda_tracker_bovengrens
           name: Bovengrens
         - type: tile
-          entity: sensor.funda_prijs_per_m2
+          entity: sensor.funda_tracker_prijs_per_m2
           name: Prijs per m²
         - type: custom:apexcharts-card
           header:
@@ -54,7 +54,7 @@
                   formatter: |
                     EVAL:function(val) { return '€' + (val/1000).toFixed(0) + 'k'; }
           series:
-            - entity: sensor.funda_house_value
+            - entity: sensor.funda_tracker_woningwaarde
               name: Waarde
               type: line
               color: "#1976D2"
@@ -63,7 +63,7 @@
               statistics:
                 type: mean
                 period: month
-            - entity: sensor.funda_bovengrens
+            - entity: sensor.funda_tracker_bovengrens
               name: Bovengrens
               type: area
               color: "#90CAF9"
@@ -73,7 +73,7 @@
               statistics:
                 type: mean
                 period: month
-            - entity: sensor.funda_ondergrens
+            - entity: sensor.funda_tracker_ondergrens
               name: Ondergrens
               type: area
               color: "#FFFFFF"
@@ -93,22 +93,22 @@
           heading_style: title
           icon: mdi:chart-line
         - type: tile
-          entity: sensor.funda_maandwijziging
+          entity: sensor.funda_tracker_maandwijziging
           name: Maandwijziging
         - type: tile
-          entity: sensor.funda_maandwijziging_pct
+          entity: sensor.funda_tracker_maandwijziging_2
           name: Maandwijziging %
         - type: tile
-          entity: sensor.funda_jaarwijziging
+          entity: sensor.funda_tracker_jaarwijziging
           name: Jaarwijziging
         - type: tile
-          entity: sensor.funda_jaarwijziging_pct
+          entity: sensor.funda_tracker_jaarwijziging_2
           name: Jaarwijziging %
         - type: tile
-          entity: sensor.funda_all_time_high
+          entity: sensor.funda_tracker_all_time_high
           name: All-time high
         - type: tile
-          entity: sensor.funda_all_time_low
+          entity: sensor.funda_tracker_all_time_low
           name: All-time low
     - type: grid
       cards:
@@ -148,14 +148,14 @@
           icon: mdi:home-city
         - type: markdown
           content: |
-            **{{ state_attr('sensor.funda_house_value', 'address') }}**
+            **{{ state_attr('sensor.funda_tracker_woningwaarde', 'address') }}**
 
-            🏠 **Type:** {{ state_attr('sensor.funda_house_value', 'building_type') }}
-            📐 **Woonoppervlakte:** {{ state_attr('sensor.funda_house_value', 'floor_size') }} m²
-            🌳 **Perceeloppervlakte:** {{ state_attr('sensor.funda_house_value', 'plot_size') }} m²
-            📅 **Bouwjaar:** {{ state_attr('sensor.funda_house_value', 'year_of_construction') }}
-            ✨ **Onderhoud:** {{ state_attr('sensor.funda_house_value', 'maintenance_state') }}
-            📍 **Buurt:** {{ state_attr('sensor.funda_house_value', 'neighbourhood') }}, {{ state_attr('sensor.funda_house_value', 'city') }}
+            🏠 **Type:** {{ state_attr('sensor.funda_tracker_woningwaarde', 'building_type') }}
+            📐 **Woonoppervlakte:** {{ state_attr('sensor.funda_tracker_woningwaarde', 'floor_size') }} m²
+            🌳 **Perceeloppervlakte:** {{ state_attr('sensor.funda_tracker_woningwaarde', 'plot_size') }} m²
+            📅 **Bouwjaar:** {{ state_attr('sensor.funda_tracker_woningwaarde', 'year_of_construction') }}
+            ✨ **Onderhoud:** {{ state_attr('sensor.funda_tracker_woningwaarde', 'maintenance_state') }}
+            📍 **Buurt:** {{ state_attr('sensor.funda_tracker_woningwaarde', 'neighbourhood') }}, {{ state_attr('sensor.funda_tracker_woningwaarde', 'city') }}
         - type: heading
           heading: Alerts
           heading_style: subtitle

@@ -12,11 +12,11 @@ import json
 import logging
 import os
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from urllib.parse import unquote, urljoin, urlparse
 
+import requests as std_requests
 from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 
@@ -30,11 +30,17 @@ log = logging.getLogger(__name__)
 DATA_DIR = Path(os.environ.get("FUNDA_DATA_DIR", "/data"))
 HISTORY_FILE = DATA_DIR / "history.json"
 SHARE_DIR = Path("/share/funda_tracker")
+SUPERVISOR_SERVICE_API = "http://supervisor/core/api/services"
+FAILURE_NOTIFICATION_ID = "funda_tracker_scrape_failed"
 
 FUNDA_BASE = "https://www.funda.nl"
-FUNDA_LOGIN_START = f"{FUNDA_BASE}/mijn/inloggen/"
+FUNDA_LOGIN_START = (
+    f"{FUNDA_BASE}/mijn-huis/auth/oidc/signin/?returnUrl=%2Fmijn-huis%2F"
+)
 FUNDA_MIJN_HUIS = f"{FUNDA_BASE}/mijn-huis/"
 WAARDECHECK_API = "https://waardecheck.funda.io/api"
+TRUSTED_AUTH_HOSTS = frozenset({"login.funda.nl", "www.funda.nl"})
+REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +51,7 @@ def load_options():
     options_path = DATA_DIR / "options.json"
     if not options_path.exists():
         log.error("No options.json found -- add-on not configured.")
-        sys.exit(1)
+        raise RuntimeError("Add-on options are unavailable")
     with open(options_path) as f:
         opts = json.load(f)
     log.info("Options loaded (email: %s)", opts.get("funda_email", "?")[:3] + "***")
@@ -72,6 +78,58 @@ def create_session():
     return session
 
 
+def _trusted_auth_url(page_url, action):
+    """Resolve a form or redirect URL and require a trusted HTTPS host."""
+    target_url = urljoin(page_url, action)
+    try:
+        parsed = urlparse(target_url)
+        trusted = (
+            parsed.scheme == "https"
+            and parsed.hostname in TRUSTED_AUTH_HOSTS
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.port in (None, 443)
+        )
+    except ValueError:
+        trusted = False
+
+    if not trusted:
+        log.error("  Refusing untrusted authentication destination: %s", target_url)
+        return None
+    return target_url
+
+
+def _post_trusted_form(session, page_url, action, data, max_redirects=10):
+    """Post a form without forwarding its body through redirects."""
+    target_url = _trusted_auth_url(page_url, action)
+    if target_url is None:
+        return None
+
+    resp = session.post(target_url, data=data, allow_redirects=False)
+    request_was_post = True
+    for _ in range(max_redirects):
+        if resp.status_code not in REDIRECT_STATUS_CODES:
+            return resp
+
+        location = resp.headers.get("Location")
+        if not location:
+            log.error("  Authentication redirect has no Location header")
+            return None
+
+        if request_was_post and resp.status_code in (307, 308):
+            log.error("  Refusing authentication redirect that preserves POST data")
+            return None
+
+        target_url = _trusted_auth_url(resp.url, location)
+        if target_url is None:
+            return None
+        resp = session.get(target_url, allow_redirects=False)
+        request_was_post = False
+
+    log.error("  Authentication redirect limit exceeded")
+    return None
+
+
 def login(session, email, password):
     """Login to Funda via OIDC flow. Returns True on success."""
     # Step 1: Get login page (Funda redirects to login.funda.nl)
@@ -89,10 +147,7 @@ def login(session, email, password):
         log.error("  No login form found on page")
         return False
 
-    parsed = urlparse(resp.url)
-    form_base = f"{parsed.scheme}://{parsed.netloc}"
     action = form.get("action", "")
-    form_url = form_base + action if action.startswith("/") else (action if action.startswith("http") else resp.url)
 
     form_data = {}
     for inp in form.find_all("input"):
@@ -103,12 +158,16 @@ def login(session, email, password):
     form_data["UserName"] = email
     form_data["Password"] = password
 
-    resp = session.post(form_url, data=form_data, allow_redirects=True)
+    resp = _post_trusted_form(session, resp.url, action, form_data)
+    if resp is None:
+        return False
     log.info("  Post-login: %d %s", resp.status_code, resp.url[:80])
 
     # Step 3: Follow OIDC form_post callbacks
     log.info("[3/4] Following OIDC redirects...")
     resp = _follow_oidc_redirects(session, resp)
+    if resp is None:
+        return False
 
     # Step 4: Visit Mijn Huis to finalize session
     log.info("[4/4] Establishing session...")
@@ -145,12 +204,10 @@ def _follow_oidc_redirects(session, resp, max_hops=5):
         if not action:
             break
 
-        if action.startswith("/"):
-            p = urlparse(resp.url)
-            action = f"{p.scheme}://{p.netloc}{action}"
-
         log.info("  OIDC redirect %d -> %s", i + 1, action[:80])
-        resp = session.post(action, data=hidden, allow_redirects=True)
+        resp = _post_trusted_form(session, resp.url, action, hidden)
+        if resp is None:
+            return None
 
     return resp
 
@@ -330,22 +387,64 @@ def calculate_stats(history, current_value):
 # Home Assistant
 # ---------------------------------------------------------------------------
 
-def push_to_homeassistant(value, stats, address, delta, home, estimates):
-    """Push individual sensors to HA via Supervisor API."""
-    import requests as std_requests
+def _call_ha_service(domain, service, payload):
+    """Call a Home Assistant service through the Supervisor API."""
     token = os.environ.get("SUPERVISOR_TOKEN")
     if not token:
-        log.warning("SUPERVISOR_TOKEN not set -- skipping HA push.")
+        log.warning("Cannot update Home Assistant notification: no Supervisor token")
         return False
 
-    log.info("Pushing sensors to Home Assistant...")
+    try:
+        response = std_requests.post(
+            f"{SUPERVISOR_SERVICE_API}/{domain}/{service}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return True
+    except std_requests.RequestException as exc:
+        log.warning("Could not update Home Assistant notification: %s", exc)
+        return False
 
+
+def notify_scrape_failure():
+    """Create or update one persistent notification for scrape failures."""
+    timestamp = datetime.now().strftime("%d-%m-%Y %H:%M")
+    return _call_ha_service(
+        "persistent_notification",
+        "create",
+        {
+            "notification_id": FAILURE_NOTIFICATION_ID,
+            "title": "Funda Tracker ophalen mislukt",
+            "message": (
+                f"De Funda-gegevens konden op {timestamp} niet worden opgehaald. "
+                "De add-on probeert het later automatisch opnieuw. "
+                "Bekijk het logboek van de Funda Tracker add-on voor de oorzaak."
+            ),
+        },
+    )
+
+
+def dismiss_scrape_failure_notification():
+    """Dismiss the failure notification after a successful scrape."""
+    return _call_ha_service(
+        "persistent_notification",
+        "dismiss",
+        {"notification_id": FAILURE_NOTIFICATION_ID},
+    )
+
+def save_sensor_data(value, stats, address, delta, home, estimates):
+    """Save sensor data for the persistent Home Assistant integration."""
     current = estimates.get("currentEstimate", {})
     bld = home.get("buildingDetail", {})
     addr = home.get("address", {})
     floor_size = bld.get("floorSize", 0)
 
-    # Build list of sensors to push
+    # Keys are the source identifiers consumed by the custom integration.
     sensors = [
         # Main value sensor (keeps all attributes for backward compatibility)
         ("sensor.funda_house_value", value, {
@@ -422,37 +521,10 @@ def push_to_homeassistant(value, stats, address, delta, home, estimates):
         }),
     ]
 
-    # Only push change sensors if they have values
+    # Only publish change sensors if they have values.
     sensors = [(eid, state, attrs) for eid, state, attrs in sensors
                if state is not None]
 
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    pushed = 0
-    for entity_id, state, attrs in sensors:
-        # Remove None values from attrs
-        clean_attrs = {k: v for k, v in attrs.items() if v is not None}
-        for attempt in range(3):
-            try:
-                resp = std_requests.post(
-                    f"http://supervisor/core/api/states/{entity_id}",
-                    headers=headers,
-                    json={"state": state, "attributes": clean_attrs},
-                    timeout=30,
-                )
-                resp.raise_for_status()
-                pushed += 1
-                break
-            except std_requests.RequestException as exc:
-                if attempt < 2:
-                    wait = 5 * (attempt + 1)
-                    log.warning("Push %s attempt %d failed: %s — retrying in %ds", entity_id, attempt + 1, exc, wait)
-                    time.sleep(wait)
-                else:
-                    log.error("Failed to push %s after 3 attempts: %s", entity_id, exc)
-
-    log.info("Pushed %d/%d sensors to HA.", pushed, len(sensors))
-
-    # Save sensor data to shared directory for the custom integration
     try:
         SHARE_DIR.mkdir(parents=True, exist_ok=True)
         sensor_data = {
@@ -462,13 +534,16 @@ def push_to_homeassistant(value, stats, address, delta, home, estimates):
                 for eid, state, attrs in sensors
             },
         }
-        with open(SHARE_DIR / "sensors.json", "w") as f:
+        temporary_path = SHARE_DIR / "sensors.json.tmp"
+        with open(temporary_path, "w") as f:
             json.dump(sensor_data, f, indent=2)
+        temporary_path.replace(SHARE_DIR / "sensors.json")
         log.info("Saved sensor data to %s/sensors.json", SHARE_DIR)
     except OSError as exc:
         log.warning("Could not save sensor data to share: %s", exc)
+        return False
 
-    return pushed > 0
+    return True
 
 
 def import_statistics(estimates):
@@ -478,7 +553,6 @@ def import_statistics(estimates):
     the sensor didn't exist yet. Uses recorder.import_statistics.
     Runs on every scrape — HA handles deduplication internally.
     """
-    import requests as std_requests
     token = os.environ.get("SUPERVISOR_TOKEN")
     if not token:
         return False
@@ -511,11 +585,11 @@ def import_statistics(estimates):
     if not entries:
         return True
 
-    # Import stats for main sensor + bounds sensors
+    # Import stats for the persistent custom-integration sensors.
     sensors = [
-        ("sensor.funda_house_value", "Funda Woningwaarde", [({"start": e["start"], "mean": e["value"], "min": e["lower"], "max": e["upper"]}) for e in entries]),
-        ("sensor.funda_ondergrens", "Funda Ondergrens", [{"start": e["start"], "mean": e["lower"], "min": e["lower"], "max": e["lower"]} for e in entries]),
-        ("sensor.funda_bovengrens", "Funda Bovengrens", [{"start": e["start"], "mean": e["upper"], "min": e["upper"], "max": e["upper"]} for e in entries]),
+        ("sensor.funda_tracker_woningwaarde", "Funda Tracker Woningwaarde", [({"start": e["start"], "mean": e["value"], "min": e["lower"], "max": e["upper"]}) for e in entries]),
+        ("sensor.funda_tracker_ondergrens", "Funda Tracker Ondergrens", [{"start": e["start"], "mean": e["lower"], "min": e["lower"], "max": e["lower"]} for e in entries]),
+        ("sensor.funda_tracker_bovengrens", "Funda Tracker Bovengrens", [{"start": e["start"], "mean": e["upper"], "min": e["upper"], "max": e["upper"]} for e in entries]),
     ]
 
     success = True
@@ -526,7 +600,7 @@ def import_statistics(estimates):
             "name": name,
             "source": "recorder",
             "statistic_id": statistic_id,
-            "unit_of_measurement": "€",
+            "unit_of_measurement": "EUR",
             "stats": stats,
         }
         try:
@@ -596,7 +670,7 @@ def run():
     log.info("  %-24s EUR %s", "Current value:", f"{current['value']:,}")
     log.info("  %-24s EUR %s - EUR %s", "Range:", f"{current.get('lowerBound', 0):,}", f"{current.get('upperBound', 0):,}")
     if address:
-        log.info("  %-24s %s", "Address:", address)
+        log.info("  %-24s %s", "Location:", addr.get("city", "available"))
     delta = estimates.get("estimateDelta", {})
     if delta:
         log.info("  %-24s %s%% (%s)", "Monthly delta:", delta.get("delta", "?"), delta.get("status", "?"))
@@ -615,16 +689,28 @@ def run():
             log.info("    %s: EUR %s (EUR %s - EUR %s)", h["date"], f"{h['value']:,}", f"{h.get('lowerBound', 0):,}", f"{h.get('upperBound', 0):,}")
     log.info("=" * 60)
 
-    push_to_homeassistant(current["value"], stats, address, delta, home, estimates)
+    if not save_sensor_data(current["value"], stats, address, delta, home, estimates):
+        log.error("Scrape data could not be published to Home Assistant")
+        return False
 
     # Import historical data into HA long-term statistics
     import_statistics(estimates)
 
     log.info("")
-    log.info("Scrape complete! Next run on day %s.", options.get("schedule_day", 10))
+    log.info("Scrape complete; the scheduler will plan the next monthly run.")
     return True
 
 
 if __name__ == "__main__":
-    success = run()
+    try:
+        success = run()
+    except Exception:
+        log.exception("Unexpected error during scrape")
+        success = False
+
+    if success:
+        dismiss_scrape_failure_notification()
+    else:
+        notify_scrape_failure()
+
     sys.exit(0 if success else 1)

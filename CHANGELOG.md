@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.2 (2026-08-17)
+- Follow Funda's current OIDC/PKCE sign-in route instead of the removed `/mijn/inloggen/` endpoint
+- Fetch one day after the configured publication day at a persistent randomized time, using a truncated normal distribution between 09:00 and 21:00
+- Retry failed scrapes after at least 6 hours within the daytime window instead of waiting until the next monthly schedule
+- Create one persistent Home Assistant notification when a scrape fails and dismiss it automatically after recovery
+- Retry immediately when the add-on is manually restarted within 10 minutes while a scrape failure is pending
+- Warn once in Home Assistant when shared sensor data is missing, unreadable, or more than 35 days old
+- Keep the last valid sensor values available after a failed scrape and expose `last_successful_update` plus `update_overdue` on the house-value entity
+- Restrict authentication form submissions and redirects to trusted HTTPS Funda hosts and avoid logging the full property address
+- Publish sensor data exclusively through the persistent custom integration instead of transient REST-created entities
+- Migrate the optional package and dashboard templates to `sensor.funda_tracker_*`
+- Import historical statistics under the persistent `sensor.funda_tracker_*` entity IDs
+
 ## 1.0.1 (2026-05-15)
 - Detect 404 from Waardecheck API and log a clear message telling the user to configure their house on Funda Mijn Huis first
 
