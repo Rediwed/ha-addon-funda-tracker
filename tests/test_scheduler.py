@@ -43,13 +43,17 @@ class SchedulerTests(unittest.TestCase):
             "scheduled_at": "2026-08-17T15:00:00",
             "retry_at": "2026-08-18T09:30:00",
             "consecutive_failures": 1,
+            "last_started_version": "1.0.4",
             "graceful_shutdown_at": (
                 now - timedelta(seconds=30)
             ).isoformat(timespec="seconds"),
         }
 
         with patch.object(scheduler, "save_state"):
-            self.assertTrue(scheduler.prepare_startup(state, now))
+            self.assertEqual(
+                scheduler.prepare_startup(state, now, "1.0.4", 10),
+                "manual restart retry",
+            )
             target, period, reason = scheduler.next_run(state, now, 10)
 
         self.assertEqual(target, now)
@@ -63,13 +67,98 @@ class SchedulerTests(unittest.TestCase):
             "scheduled_at": "2026-08-17T15:00:00",
             "retry_at": "2026-08-18T09:30:00",
             "consecutive_failures": 1,
+            "last_started_version": "1.0.4",
         }
 
         with patch.object(scheduler, "save_state"):
-            self.assertFalse(scheduler.prepare_startup(state, now))
+            self.assertIsNone(scheduler.prepare_startup(state, now, "1.0.4", 10))
             target, _, reason = scheduler.next_run(state, now, 10)
 
         self.assertEqual(target, datetime(2026, 8, 18, 9, 30))
+        self.assertEqual(reason, "retry")
+
+    def test_first_start_of_new_version_scrapes_immediately(self):
+        now = datetime(2026, 8, 17, 17, 55)
+        state = {
+            "last_started_version": "1.0.3",
+            "last_success_period": "2026-07",
+            "publication_day": 10,
+            "scheduled_period": "2026-08",
+            "scheduled_at": "2026-08-17T19:00:38",
+        }
+
+        with patch.object(scheduler, "save_state"):
+            self.assertEqual(
+                scheduler.prepare_startup(state, now, "1.0.4", 10),
+                "version upgrade",
+            )
+            target, period, reason = scheduler.next_run(state, now, 10)
+
+        self.assertEqual(state["last_started_version"], "1.0.4")
+        self.assertEqual(target, now)
+        self.assertEqual(period, "2026-08")
+        self.assertEqual(reason, "version upgrade")
+
+    def test_deployed_v103_state_without_marker_scrapes_immediately(self):
+        now = datetime(2026, 8, 17, 17, 59)
+        state = {
+            "last_success_period": "2026-07",
+            "publication_day": 10,
+            "scheduled_period": "2026-08",
+            "scheduled_at": "2026-08-17T19:00:38",
+        }
+
+        with patch.object(scheduler, "save_state"):
+            scheduler.prepare_startup(state, now, "1.0.4", 10)
+            target, period, reason = scheduler.next_run(state, now, 10)
+
+        self.assertEqual(state["last_started_version"], "1.0.4")
+        self.assertEqual(target, now)
+        self.assertEqual(period, "2026-08")
+        self.assertEqual(reason, "version upgrade")
+
+    def test_restart_of_same_healthy_version_keeps_monthly_target(self):
+        now = datetime(2026, 8, 17, 17, 55)
+        state = {
+            "last_started_version": "1.0.4",
+            "last_success_period": "2026-07",
+            "publication_day": 10,
+            "scheduled_period": "2026-08",
+            "scheduled_at": "2026-08-17T19:00:38",
+        }
+
+        with patch.object(scheduler, "save_state"):
+            self.assertIsNone(scheduler.prepare_startup(state, now, "1.0.4", 10))
+            target, period, reason = scheduler.next_run(state, now, 10)
+
+        self.assertEqual(target, datetime(2026, 8, 17, 19, 0, 38))
+        self.assertEqual(period, "2026-08")
+        self.assertEqual(reason, "monthly")
+
+    def test_failed_first_version_scrape_enters_bounded_retry(self):
+        now = datetime(2026, 8, 17, 17, 55)
+        state = {}
+
+        with patch.object(scheduler, "save_state"):
+            scheduler.prepare_startup(state, now, "1.0.4", 10)
+            _, period, _ = scheduler.next_run(state, now, 10)
+            retry_at = scheduler.record_failure(
+                state,
+                period,
+                now,
+                rng=random.Random(42),
+            )
+            target, retry_period, reason = scheduler.next_run(
+                state,
+                now,
+                10,
+                rng=random.Random(42),
+            )
+
+        self.assertEqual(retry_period, period)
+        self.assertEqual(target, retry_at)
+        self.assertGreaterEqual(retry_at, now + scheduler.RETRY_DELAY)
+        self.assertTrue(scheduler.is_in_window(retry_at))
         self.assertEqual(reason, "retry")
 
     def test_state_write_is_atomic(self):

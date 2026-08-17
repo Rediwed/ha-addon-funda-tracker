@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4 (2026-08-17)
+- Run one immediate validation scrape on the first start after every add-on update, so an update can repair stale data without waiting for the randomized monthly window
+- Persist the new version marker before scraping to prevent crash loops; failed validation scrapes return to the normal six-hour daytime retry schedule
+
 ## 1.0.3 (2026-08-17)
 - Add the changelog to the add-on package so Home Assistant Supervisor displays release notes before updating
 - Keep the legacy `schedule_hour` option schema-compatible during upgrades while clearly logging that randomized daytime scheduling replaces it

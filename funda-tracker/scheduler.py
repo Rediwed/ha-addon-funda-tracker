@@ -189,6 +189,13 @@ def next_run(state, now, publication_day, rng=RANDOM):
             publication_day,
         )
 
+    if state.get("version_scrape_pending"):
+        target = parse_target(state.get("version_scrape_at")) or now
+        period = state.get("version_scrape_period") or latest_published_period(
+            now, publication_day
+        )
+        return target, period, "version upgrade"
+
     retry_target = parse_target(state.get("retry_at"))
     if retry_target:
         manual_restart = state.get("manual_restart_retry", False)
@@ -226,14 +233,21 @@ def record_success(state, period, now):
         "retry_at",
         "last_failure_at",
         "manual_restart_retry",
+        "version_scrape_pending",
+        "version_scrape_at",
+        "version_scrape_period",
     ):
         state.pop(key, None)
     save_state(state)
 
 
-def record_failure(state, now, rng=RANDOM):
+def record_failure(state, period, now, rng=RANDOM):
     retry_at = next_allowed_time(now, earliest=now + RETRY_DELAY, rng=rng)
     state.pop("manual_restart_retry", None)
+    state.pop("version_scrape_pending", None)
+    state.pop("version_scrape_at", None)
+    state.pop("version_scrape_period", None)
+    state["scheduled_period"] = period
     state["retry_at"] = retry_at.isoformat(timespec="seconds")
     state["last_failure_at"] = now.isoformat(timespec="seconds")
     state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
@@ -241,9 +255,28 @@ def record_failure(state, now, rng=RANDOM):
     return retry_at
 
 
-def prepare_startup(state, now):
-    """Turn a quick graceful restart with a pending failure into one retry."""
+def prepare_startup(state, now, addon_version, publication_day):
+    """Schedule one version validation or a deliberate failure retry."""
     shutdown_at = parse_target(state.pop("graceful_shutdown_at", None))
+    previous_version = state.get("last_started_version")
+    if previous_version != addon_version:
+        state["last_started_version"] = addon_version
+        state["version_scrape_pending"] = True
+        state["version_scrape_at"] = now.isoformat(timespec="seconds")
+        state["version_scrape_period"] = latest_published_period(
+            now, publication_day
+        )
+        state.pop("retry_at", None)
+        state.pop("manual_restart_retry", None)
+        save_state(state)
+        log.info(
+            "First start of add-on version %s (previous: %s); running one "
+            "immediate validation scrape",
+            addon_version,
+            previous_version or "none",
+        )
+        return "version upgrade"
+
     pending_failure = bool(state.get("retry_at")) or state.get("consecutive_failures", 0) > 0
     restart_age = now - shutdown_at if shutdown_at else None
     manual_restart = bool(
@@ -261,7 +294,7 @@ def prepare_startup(state, now):
 
     if shutdown_at or manual_restart:
         save_state(state)
-    return manual_restart
+    return "manual restart retry" if manual_restart else None
 
 
 def install_signal_handlers(state):
@@ -286,7 +319,8 @@ def run_scraper():
 def main():
     publication_day = load_options()
     state = load_state()
-    prepare_startup(state, datetime.now())
+    addon_version = os.environ.get("FUNDA_ADDON_VERSION", "unknown")
+    prepare_startup(state, datetime.now(), addon_version, publication_day)
     install_signal_handlers(state)
     last_announced_target = None
 
@@ -312,7 +346,10 @@ def main():
             continue
 
         now = datetime.now()
-        if not is_in_window(now) and reason != "manual restart retry":
+        if not is_in_window(now) and reason not in (
+            "manual restart retry",
+            "version upgrade",
+        ):
             state.pop("retry_at", None)
             state["scheduled_at"] = next_allowed_time(now).isoformat(timespec="seconds")
             save_state(state)
@@ -324,7 +361,7 @@ def main():
             record_success(state, period, datetime.now())
             log.info("Fetch succeeded")
         else:
-            retry_at = record_failure(state, datetime.now())
+            retry_at = record_failure(state, period, datetime.now())
             log.error(
                 "Fetch failed; next retry is scheduled for %s",
                 retry_at.strftime("%d-%m-%Y %H:%M:%S"),
