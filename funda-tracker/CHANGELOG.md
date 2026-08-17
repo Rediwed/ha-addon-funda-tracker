@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.5 (2026-08-17)
+- Record graceful `SIGTERM` and `SIGINT` shutdowns and run one immediate scrape on the next start, covering manual restarts, add-on updates, and orderly host reboots
+- Consume the shutdown marker before scraping so an abrupt crash cannot create an immediate-restart request loop; fresh installations still scrape once immediately
+
 ## 1.0.4 (2026-08-17)
 - Run one immediate validation scrape on the first start after every add-on update, so an update can repair stale data without waiting for the randomized monthly window
 - Persist the new version marker before scraping to prevent crash loops; failed validation scrapes return to the normal six-hour daytime retry schedule

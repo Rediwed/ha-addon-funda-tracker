@@ -39,8 +39,9 @@ The add-on fetches the data on the following calendar day. It chooses a new time
 for each publication month from a truncated normal distribution centred on
 15:00 with a 3-hour standard deviation and hard limits of 09:00 and 21:00. The
 selected time is saved in `/data`, so restarting the add-on does not redraw it.
-Fresh installations and the first start after each add-on update run one
-immediate validation scrape. Normal restarts keep the saved monthly target.
+Fresh installations and the first start after a graceful shutdown run one
+immediate validation scrape. This covers manual restarts, add-on updates, and
+orderly host reboots. Abrupt crashes keep the bounded retry schedule instead.
 
 When upgrading from 1.0.1, the old `schedule_hour` value remains accepted for
 configuration compatibility but is ignored. Home Assistant requires manual

@@ -36,29 +36,60 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(target.date().isoformat(), "2027-03-01")
         self.assertTrue(scheduler.is_in_window(target))
 
-    def test_quick_graceful_restart_retries_immediately(self):
+    def test_graceful_restart_scrapes_immediately(self):
         now = datetime(2026, 8, 17, 22, 30)
         state = {
+            "startup_initialized": True,
             "scheduled_period": "2026-08",
             "scheduled_at": "2026-08-17T15:00:00",
             "retry_at": "2026-08-18T09:30:00",
             "consecutive_failures": 1,
-            "last_started_version": "1.0.4",
             "graceful_shutdown_at": (
                 now - timedelta(seconds=30)
             ).isoformat(timespec="seconds"),
         }
 
         with patch.object(scheduler, "save_state"):
-            self.assertEqual(
-                scheduler.prepare_startup(state, now, "1.0.4", 10),
-                "manual restart retry",
-            )
-            target, period, reason = scheduler.next_run(state, now, 10)
+            startup_run = scheduler.prepare_startup(state, now, 10)
 
-        self.assertEqual(target, now)
-        self.assertEqual(period, "2026-08")
-        self.assertEqual(reason, "manual restart retry")
+        self.assertEqual(startup_run, ("graceful restart", "2026-08"))
+        self.assertNotIn("graceful_shutdown_at", state)
+        self.assertNotIn("retry_at", state)
+
+    def test_graceful_marker_is_consumed_before_scrape(self):
+        now = datetime(2026, 8, 17, 22, 30)
+        state = {
+            "startup_initialized": True,
+            "graceful_shutdown_at": now.isoformat(timespec="seconds"),
+        }
+
+        with patch.object(scheduler, "save_state"):
+            self.assertEqual(
+                scheduler.prepare_startup(state, now, 10),
+                ("graceful restart", "2026-08"),
+            )
+            self.assertIsNone(scheduler.prepare_startup(state, now, 10))
+
+        self.assertNotIn("graceful_shutdown_at", state)
+
+    def test_sigterm_records_graceful_shutdown_marker(self):
+        state = {}
+        handlers = {}
+
+        with patch.object(
+            scheduler.signal,
+            "signal",
+            side_effect=lambda signum, handler: handlers.__setitem__(signum, handler),
+        ), patch.object(scheduler, "save_state") as save_state:
+            scheduler.install_signal_handlers(state)
+            with self.assertRaises(SystemExit) as raised:
+                handlers[scheduler.signal.SIGTERM](scheduler.signal.SIGTERM, None)
+
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIsNotNone(
+            scheduler.parse_target(state.get("graceful_shutdown_at"))
+        )
+        save_state.assert_called_once_with(state)
 
     def test_crash_does_not_accelerate_retry(self):
         now = datetime(2026, 8, 17, 22, 30)
@@ -67,39 +98,27 @@ class SchedulerTests(unittest.TestCase):
             "scheduled_at": "2026-08-17T15:00:00",
             "retry_at": "2026-08-18T09:30:00",
             "consecutive_failures": 1,
-            "last_started_version": "1.0.4",
+            "startup_initialized": True,
         }
 
         with patch.object(scheduler, "save_state"):
-            self.assertIsNone(scheduler.prepare_startup(state, now, "1.0.4", 10))
+            self.assertIsNone(scheduler.prepare_startup(state, now, 10))
             target, _, reason = scheduler.next_run(state, now, 10)
 
         self.assertEqual(target, datetime(2026, 8, 18, 9, 30))
         self.assertEqual(reason, "retry")
 
-    def test_first_start_of_new_version_scrapes_immediately(self):
+    def test_first_start_scrapes_immediately(self):
         now = datetime(2026, 8, 17, 17, 55)
-        state = {
-            "last_started_version": "1.0.3",
-            "last_success_period": "2026-07",
-            "publication_day": 10,
-            "scheduled_period": "2026-08",
-            "scheduled_at": "2026-08-17T19:00:38",
-        }
+        state = {}
 
         with patch.object(scheduler, "save_state"):
-            self.assertEqual(
-                scheduler.prepare_startup(state, now, "1.0.4", 10),
-                "version upgrade",
-            )
-            target, period, reason = scheduler.next_run(state, now, 10)
+            startup_run = scheduler.prepare_startup(state, now, 10)
 
-        self.assertEqual(state["last_started_version"], "1.0.4")
-        self.assertEqual(target, now)
-        self.assertEqual(period, "2026-08")
-        self.assertEqual(reason, "version upgrade")
+        self.assertEqual(startup_run, ("first start", "2026-08"))
+        self.assertTrue(state["startup_initialized"])
 
-    def test_deployed_v103_state_without_marker_scrapes_immediately(self):
+    def test_deployed_state_without_startup_marker_scrapes_immediately(self):
         now = datetime(2026, 8, 17, 17, 59)
         state = {
             "last_success_period": "2026-07",
@@ -109,18 +128,15 @@ class SchedulerTests(unittest.TestCase):
         }
 
         with patch.object(scheduler, "save_state"):
-            scheduler.prepare_startup(state, now, "1.0.4", 10)
-            target, period, reason = scheduler.next_run(state, now, 10)
+            startup_run = scheduler.prepare_startup(state, now, 10)
 
-        self.assertEqual(state["last_started_version"], "1.0.4")
-        self.assertEqual(target, now)
-        self.assertEqual(period, "2026-08")
-        self.assertEqual(reason, "version upgrade")
+        self.assertEqual(startup_run, ("first start", "2026-08"))
+        self.assertTrue(state["startup_initialized"])
 
     def test_restart_of_same_healthy_version_keeps_monthly_target(self):
         now = datetime(2026, 8, 17, 17, 55)
         state = {
-            "last_started_version": "1.0.4",
+            "startup_initialized": True,
             "last_success_period": "2026-07",
             "publication_day": 10,
             "scheduled_period": "2026-08",
@@ -128,20 +144,19 @@ class SchedulerTests(unittest.TestCase):
         }
 
         with patch.object(scheduler, "save_state"):
-            self.assertIsNone(scheduler.prepare_startup(state, now, "1.0.4", 10))
+            self.assertIsNone(scheduler.prepare_startup(state, now, 10))
             target, period, reason = scheduler.next_run(state, now, 10)
 
         self.assertEqual(target, datetime(2026, 8, 17, 19, 0, 38))
         self.assertEqual(period, "2026-08")
         self.assertEqual(reason, "monthly")
 
-    def test_failed_first_version_scrape_enters_bounded_retry(self):
+    def test_failed_startup_scrape_enters_bounded_retry(self):
         now = datetime(2026, 8, 17, 17, 55)
         state = {}
 
         with patch.object(scheduler, "save_state"):
-            scheduler.prepare_startup(state, now, "1.0.4", 10)
-            _, period, _ = scheduler.next_run(state, now, 10)
+            _, period = scheduler.prepare_startup(state, now, 10)
             retry_at = scheduler.record_failure(
                 state,
                 period,

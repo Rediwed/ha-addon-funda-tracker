@@ -32,7 +32,6 @@ WINDOW_MEAN_SECONDS = 15 * 60 * 60
 WINDOW_STDDEV_SECONDS = 3 * 60 * 60
 RETRY_DELAY = timedelta(hours=6)
 MINIMUM_LEAD_TIME = timedelta(minutes=5)
-MANUAL_RESTART_WINDOW = timedelta(minutes=10)
 RANDOM = random.SystemRandom()
 
 
@@ -189,22 +188,13 @@ def next_run(state, now, publication_day, rng=RANDOM):
             publication_day,
         )
 
-    if state.get("version_scrape_pending"):
-        target = parse_target(state.get("version_scrape_at")) or now
-        period = state.get("version_scrape_period") or latest_published_period(
-            now, publication_day
-        )
-        return target, period, "version upgrade"
-
     retry_target = parse_target(state.get("retry_at"))
     if retry_target:
-        manual_restart = state.get("manual_restart_retry", False)
-        if retry_target <= now and not is_in_window(now) and not manual_restart:
+        if retry_target <= now and not is_in_window(now):
             retry_target = next_allowed_time(now, rng=rng)
             state["retry_at"] = retry_target.isoformat(timespec="seconds")
             save_state(state)
-        reason = "manual restart retry" if manual_restart else "retry"
-        return retry_target, state["scheduled_period"], reason
+        return retry_target, state["scheduled_period"], "retry"
 
     period = choose_target_period(state, now, publication_day)
     target = parse_target(state.get("scheduled_at"))
@@ -232,7 +222,6 @@ def record_success(state, period, now):
         "scheduled_at",
         "retry_at",
         "last_failure_at",
-        "manual_restart_retry",
         "version_scrape_pending",
         "version_scrape_at",
         "version_scrape_period",
@@ -243,7 +232,6 @@ def record_success(state, period, now):
 
 def record_failure(state, period, now, rng=RANDOM):
     retry_at = next_allowed_time(now, earliest=now + RETRY_DELAY, rng=rng)
-    state.pop("manual_restart_retry", None)
     state.pop("version_scrape_pending", None)
     state.pop("version_scrape_at", None)
     state.pop("version_scrape_period", None)
@@ -255,46 +243,32 @@ def record_failure(state, period, now, rng=RANDOM):
     return retry_at
 
 
-def prepare_startup(state, now, addon_version, publication_day):
-    """Schedule one version validation or a deliberate failure retry."""
-    shutdown_at = parse_target(state.pop("graceful_shutdown_at", None))
-    previous_version = state.get("last_started_version")
-    if previous_version != addon_version:
-        state["last_started_version"] = addon_version
-        state["version_scrape_pending"] = True
-        state["version_scrape_at"] = now.isoformat(timespec="seconds")
-        state["version_scrape_period"] = latest_published_period(
-            now, publication_day
-        )
-        state.pop("retry_at", None)
-        state.pop("manual_restart_retry", None)
-        save_state(state)
-        log.info(
-            "First start of add-on version %s (previous: %s); running one "
-            "immediate validation scrape",
-            addon_version,
-            previous_version or "none",
-        )
-        return "version upgrade"
+def prepare_startup(state, now, publication_day):
+    """Consume a graceful-shutdown marker and request one startup scrape."""
+    shutdown_marker = state.pop("graceful_shutdown_at", None)
+    graceful_shutdown = parse_target(shutdown_marker)
+    first_start = not state.get("startup_initialized", False)
+    state["startup_initialized"] = True
 
-    pending_failure = bool(state.get("retry_at")) or state.get("consecutive_failures", 0) > 0
-    restart_age = now - shutdown_at if shutdown_at else None
-    manual_restart = bool(
-        pending_failure
-        and restart_age is not None
-        and timedelta(0) <= restart_age <= MANUAL_RESTART_WINDOW
-    )
+    for key in (
+        "last_started_version",
+        "version_scrape_pending",
+        "version_scrape_at",
+        "version_scrape_period",
+        "manual_restart_retry",
+    ):
+        state.pop(key, None)
 
-    if manual_restart:
-        state["manual_restart_retry"] = True
-        state["retry_at"] = now.isoformat(timespec="seconds")
-        log.info("Pending failure detected after manual restart; retrying immediately")
-    else:
-        state.pop("manual_restart_retry", None)
+    if graceful_shutdown is None and not first_start:
+        if shutdown_marker is not None:
+            save_state(state)
+        return None
 
-    if shutdown_at or manual_restart:
-        save_state(state)
-    return "manual restart retry" if manual_restart else None
+    state.pop("retry_at", None)
+    save_state(state)
+    reason = "first start" if first_start and graceful_shutdown is None else "graceful restart"
+    log.info("%s detected; running one immediate scrape", reason.capitalize())
+    return reason, latest_published_period(now, publication_day)
 
 
 def install_signal_handlers(state):
@@ -319,13 +293,25 @@ def run_scraper():
 def main():
     publication_day = load_options()
     state = load_state()
-    addon_version = os.environ.get("FUNDA_ADDON_VERSION", "unknown")
-    prepare_startup(state, datetime.now(), addon_version, publication_day)
+    startup_run = prepare_startup(state, datetime.now(), publication_day)
     install_signal_handlers(state)
     last_announced_target = None
 
     log.info("Funda publishes monthly data around day %d", publication_day)
     log.info("Fetch window: 09:00-21:00, normal distribution around 15:00")
+
+    if startup_run:
+        reason, period = startup_run
+        log.info("Starting %s fetch for publication period %s", reason, period)
+        if run_scraper():
+            record_success(state, period, datetime.now())
+            log.info("Fetch succeeded")
+        else:
+            retry_at = record_failure(state, period, datetime.now())
+            log.error(
+                "Fetch failed; next retry is scheduled for %s",
+                retry_at.strftime("%d-%m-%Y %H:%M:%S"),
+            )
 
     while True:
         now = datetime.now()
@@ -346,10 +332,7 @@ def main():
             continue
 
         now = datetime.now()
-        if not is_in_window(now) and reason not in (
-            "manual restart retry",
-            "version upgrade",
-        ):
+        if not is_in_window(now):
             state.pop("retry_at", None)
             state["scheduled_at"] = next_allowed_time(now).isoformat(timespec="seconds")
             save_state(state)
