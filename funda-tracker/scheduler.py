@@ -60,6 +60,11 @@ def load_options():
     publication_day = int(options.get("schedule_day", 10))
     if not 1 <= publication_day <= 28:
         raise ValueError("schedule_day must be between 1 and 28")
+    if "schedule_hour" in options:
+        log.warning(
+            "schedule_hour is deprecated and ignored; fetches are randomized "
+            "between 09:00 and 21:00"
+        )
     return publication_day
 
 
@@ -168,6 +173,22 @@ def parse_target(value):
 
 
 def next_run(state, now, publication_day, rng=RANDOM):
+    previous_publication_day = state.get("publication_day")
+    if previous_publication_day is None:
+        state["publication_day"] = publication_day
+        save_state(state)
+    elif previous_publication_day != publication_day:
+        state["publication_day"] = publication_day
+        if not state.get("retry_at"):
+            state.pop("scheduled_period", None)
+            state.pop("scheduled_at", None)
+        save_state(state)
+        log.info(
+            "Publication day changed from %s to %s; replanning monthly fetch",
+            previous_publication_day,
+            publication_day,
+        )
+
     retry_target = parse_target(state.get("retry_at"))
     if retry_target:
         manual_restart = state.get("manual_restart_retry", False)

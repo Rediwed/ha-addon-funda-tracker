@@ -1,3 +1,4 @@
+import json
 import random
 import tempfile
 import unittest
@@ -84,6 +85,82 @@ class SchedulerTests(unittest.TestCase):
                 {"scheduled_period": "2026-09"},
             )
             self.assertFalse(state_file.with_suffix(".json.tmp").exists())
+
+    def test_changed_publication_day_replans_monthly_target(self):
+        now = datetime(2026, 8, 20, 12, 0)
+        state = {
+            "last_success_period": "2026-08",
+            "publication_day": 10,
+            "scheduled_period": "2026-09",
+            "scheduled_at": "2026-09-11T15:00:00",
+        }
+
+        with patch.object(scheduler, "save_state"):
+            target, period, reason = scheduler.next_run(
+                state,
+                now,
+                publication_day=15,
+                rng=random.Random(42),
+            )
+
+        self.assertEqual(state["publication_day"], 15)
+        self.assertEqual(period, "2026-09")
+        self.assertEqual(target.date().isoformat(), "2026-09-16")
+        self.assertEqual(reason, "monthly")
+
+    def test_deprecated_schedule_hour_is_ignored_with_warning(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            options_file = Path(temporary_directory) / "options.json"
+            options_file.write_text(json.dumps({
+                "schedule_day": 10,
+                "schedule_hour": 14,
+            }))
+
+            with patch.object(scheduler, "OPTIONS_FILE", options_file), self.assertLogs(
+                scheduler.log, level="WARNING"
+            ) as captured:
+                publication_day = scheduler.load_options()
+
+        self.assertEqual(publication_day, 10)
+        self.assertIn("schedule_hour is deprecated", captured.output[0])
+
+    def test_v101_history_infers_last_successful_period(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            history_file = Path(temporary_directory) / "history.json"
+            history_file.write_text(json.dumps({
+                "entries": [
+                    {
+                        "date": "2026-07-10",
+                        "value": 592_000,
+                        "scraped_at": "2026-07-10T10:00:00",
+                    }
+                ]
+            }))
+
+            with patch.object(scheduler, "HISTORY_FILE", history_file), patch.object(
+                scheduler, "STATE_FILE", Path(temporary_directory) / "missing.json"
+            ):
+                state = scheduler.load_state()
+
+        self.assertEqual(state["last_success_period"], "2026-07")
+
+    def test_stale_v101_history_schedules_current_period_catch_up(self):
+        now = datetime(2026, 8, 17, 16, 0)
+        state = {"last_success_period": "2026-07"}
+
+        with patch.object(scheduler, "save_state"):
+            target, period, reason = scheduler.next_run(
+                state,
+                now,
+                publication_day=10,
+                rng=random.Random(42),
+            )
+
+        self.assertEqual(period, "2026-08")
+        self.assertEqual(target.date(), now.date())
+        self.assertGreaterEqual(target, now + scheduler.MINIMUM_LEAD_TIME)
+        self.assertTrue(scheduler.is_in_window(target))
+        self.assertEqual(reason, "monthly")
 
 
 if __name__ == "__main__":

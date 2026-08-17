@@ -40,6 +40,12 @@ for each publication month from a truncated normal distribution centred on
 15:00 with a 3-hour standard deviation and hard limits of 09:00 and 21:00. The
 selected time is saved in `/data`, so restarting the add-on does not redraw it.
 
+When upgrading from 1.0.1, the old `schedule_hour` value remains accepted for
+configuration compatibility but is ignored. Home Assistant requires manual
+confirmation for this update because `schedule_day` now means Funda's expected
+publication day, the randomized fetch runs one day later, and consumers must use
+the persistent `sensor.funda_tracker_*` entities.
+
 ## Entities
 
 ### Sensors (provided by the custom integration)

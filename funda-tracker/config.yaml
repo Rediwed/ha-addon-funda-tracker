@@ -1,6 +1,6 @@
 name: "Funda Tracker"
 description: "Scrapes your estimated house value from Funda Mijn Huis and tracks it as a sensor"
-version: "1.0.2"
+version: "1.0.3"
 slug: funda-tracker
 url: "https://github.com/Rediwed/ha-addon-funda-tracker"
 arch:
@@ -8,6 +8,8 @@ arch:
   - amd64
 startup: application
 boot: manual
+breaking_versions:
+  - "1.0.2"
 homeassistant_api: true
 options:
   funda_email: ""
@@ -17,6 +19,7 @@ schema:
   funda_email: email
   funda_password: password
   schedule_day: "int(1,28)"
+  schedule_hour: "int(0,23)?"
 map:
   - type: addon_config
     read_only: true
