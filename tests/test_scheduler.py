@@ -72,6 +72,73 @@ class SchedulerTests(unittest.TestCase):
 
         self.assertNotIn("graceful_shutdown_at", state)
 
+    def test_repeated_restart_within_cooldown_skips_startup_scrape(self):
+        now = datetime(2026, 8, 17, 22, 30)
+        state = {
+            "startup_initialized": True,
+            "last_success_at": (now - timedelta(minutes=10)).isoformat(timespec="seconds"),
+            "graceful_shutdown_at": now.isoformat(timespec="seconds"),
+        }
+
+        with patch.object(scheduler, "save_state"):
+            self.assertIsNone(scheduler.prepare_startup(state, now, 10))
+
+        self.assertNotIn("graceful_shutdown_at", state)
+
+    def test_restart_retry_after_failure_is_allowed_up_to_limit(self):
+        now = datetime(2026, 8, 17, 22, 30)
+        state = {
+            "startup_initialized": True,
+            "retry_at": "2026-08-18T09:30:00",
+            "consecutive_failures": 1,
+            "restart_retry_count": scheduler.MAX_RESTART_RETRIES - 1,
+            "graceful_shutdown_at": now.isoformat(timespec="seconds"),
+        }
+
+        with patch.object(scheduler, "save_state"):
+            startup_run = scheduler.prepare_startup(state, now, 10)
+
+        self.assertEqual(startup_run, ("graceful restart", "2026-08"))
+        self.assertEqual(state["restart_retry_count"], scheduler.MAX_RESTART_RETRIES)
+        self.assertNotIn("retry_at", state)
+
+    def test_restart_retry_budget_exhausted_falls_back_to_scheduled_retry(self):
+        now = datetime(2026, 8, 17, 22, 30)
+        state = {
+            "startup_initialized": True,
+            "retry_at": "2026-08-18T09:30:00",
+            "consecutive_failures": 4,
+            "restart_retry_count": scheduler.MAX_RESTART_RETRIES,
+            "graceful_shutdown_at": now.isoformat(timespec="seconds"),
+        }
+
+        with patch.object(scheduler, "save_state"):
+            self.assertIsNone(scheduler.prepare_startup(state, now, 10))
+
+        self.assertNotIn("graceful_shutdown_at", state)
+        self.assertEqual(state["retry_at"], "2026-08-18T09:30:00")
+
+    def test_success_resets_restart_retry_count(self):
+        state = {"restart_retry_count": 2, "retry_at": "2026-08-18T09:30:00"}
+
+        with patch.object(scheduler, "save_state"):
+            scheduler.record_success(state, "2026-08", datetime(2026, 8, 17, 22, 30))
+
+        self.assertNotIn("restart_retry_count", state)
+
+    def test_restart_after_cooldown_scrapes_again(self):
+        now = datetime(2026, 8, 17, 22, 30)
+        state = {
+            "startup_initialized": True,
+            "last_success_at": (now - timedelta(hours=2)).isoformat(timespec="seconds"),
+            "graceful_shutdown_at": now.isoformat(timespec="seconds"),
+        }
+
+        with patch.object(scheduler, "save_state"):
+            startup_run = scheduler.prepare_startup(state, now, 10)
+
+        self.assertEqual(startup_run, ("graceful restart", "2026-08"))
+
     def test_sigterm_records_graceful_shutdown_marker(self):
         state = {}
         handlers = {}

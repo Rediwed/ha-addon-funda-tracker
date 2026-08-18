@@ -32,6 +32,8 @@ WINDOW_MEAN_SECONDS = 15 * 60 * 60
 WINDOW_STDDEV_SECONDS = 3 * 60 * 60
 RETRY_DELAY = timedelta(hours=6)
 MINIMUM_LEAD_TIME = timedelta(minutes=5)
+STARTUP_SCRAPE_COOLDOWN = timedelta(hours=1)
+MAX_RESTART_RETRIES = 3
 RANDOM = random.SystemRandom()
 
 
@@ -225,6 +227,7 @@ def record_success(state, period, now):
         "version_scrape_pending",
         "version_scrape_at",
         "version_scrape_period",
+        "restart_retry_count",
     ):
         state.pop(key, None)
     save_state(state)
@@ -263,6 +266,31 @@ def prepare_startup(state, now, publication_day):
         if shutdown_marker is not None:
             save_state(state)
         return None
+
+    pending_failure = bool(state.get("retry_at")) or state.get("consecutive_failures", 0) > 0
+
+    if pending_failure and not first_start:
+        restart_retry_count = state.get("restart_retry_count", 0)
+        if restart_retry_count >= MAX_RESTART_RETRIES:
+            save_state(state)
+            log.info(
+                "Skipping startup scrape; already retried %d/%d times via restart "
+                "since the last failure -- waiting for the scheduled retry instead",
+                restart_retry_count,
+                MAX_RESTART_RETRIES,
+            )
+            return None
+        state["restart_retry_count"] = restart_retry_count + 1
+    elif not first_start:
+        last_success_at = parse_target(state.get("last_success_at"))
+        if last_success_at is not None and now - last_success_at < STARTUP_SCRAPE_COOLDOWN:
+            save_state(state)
+            log.info(
+                "Skipping startup scrape; last successful fetch was %s ago (cooldown: %s)",
+                now - last_success_at,
+                STARTUP_SCRAPE_COOLDOWN,
+            )
+            return None
 
     state.pop("retry_at", None)
     save_state(state)

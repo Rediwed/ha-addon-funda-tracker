@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.6 (2026-08-18)
+- Keep immediate scrape-on-restart working after a failure for debugging, but cap it at 3 consecutive restarts before falling back to the normal six-hour retry
+- Add a one-hour cooldown to the graceful-restart startup scrape when the last outcome was a success, so repeated healthy restarts cannot trigger unbounded requests to Funda
+
 ## 1.0.5 (2026-08-17)
 - Record graceful `SIGTERM` and `SIGINT` shutdowns and run one immediate scrape on the next start, covering manual restarts, add-on updates, and orderly host reboots
 - Consume the shutdown marker before scraping so an abrupt crash cannot create an immediate-restart request loop; fresh installations still scrape once immediately
