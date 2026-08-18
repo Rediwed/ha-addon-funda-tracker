@@ -12,7 +12,32 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import DOMAIN, SCAN_INTERVAL_MINUTES, SENSOR_DATA_PATH, STALE_DATA_AFTER
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = ["sensor"]
+PLATFORMS = ["number", "sensor"]
+
+
+class FinanceStore:
+    """Holds the finance amounts so sensors never depend on entity IDs."""
+
+    def __init__(self) -> None:
+        self._values: dict[str, float] = {}
+        self._listeners: list = []
+
+    def get(self, key: str) -> float:
+        return self._values.get(key, 0.0)
+
+    def set(self, key: str, value: float) -> None:
+        if self._values.get(key) == value:
+            return
+        self._values[key] = value
+        for notify in list(self._listeners):
+            notify()
+
+    def add_listener(self, notify) -> None:
+        self._listeners.append(notify)
+
+    def remove_listener(self, notify) -> None:
+        if notify in self._listeners:
+            self._listeners.remove(notify)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -20,7 +45,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = FundaDataCoordinator(hass)
     await coordinator.async_config_entry_first_refresh()
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+        "coordinator": coordinator,
+        "finance": FinanceStore(),
+    }
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 

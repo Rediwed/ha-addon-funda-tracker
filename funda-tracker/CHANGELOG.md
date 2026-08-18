@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 (2026-08-18)
+- The integration now provides the finance amounts itself as three `number` entities, so no input helpers have to be created by hand
+- Equity, market gain, total profit, and both ROI sensors are now part of the integration and stay unavailable until their amount is set
+- The amounts can still be changed from an automation with `number.set_value`, for example to reduce the mortgage balance every month
+- The example package keeps working unchanged for anyone already using the `input_number` helpers
+
 ## 1.0.6 (2026-08-18)
 - Keep immediate scrape-on-restart working after a failure for debugging, but cap it at 3 consecutive restarts before falling back to the normal six-hour retry
 - Add a one-hour cooldown to the graceful-restart startup scrape when the last outcome was a success, so repeated healthy restarts cannot trigger unbounded requests to Funda

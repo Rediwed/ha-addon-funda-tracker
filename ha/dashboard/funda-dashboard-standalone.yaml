@@ -121,28 +121,28 @@ views:
             heading_style: title
             icon: mdi:cash-multiple
           - type: tile
-            entity: input_number.funda_purchase_price
+            entity: number.funda_tracker_aankoopprijs
             name: Aankoopprijs
           - type: tile
-            entity: input_number.funda_total_investment
+            entity: number.funda_tracker_totale_investering
             name: Totale investering
           - type: tile
-            entity: input_number.funda_mortgage_balance
+            entity: number.funda_tracker_hypotheek
             name: Hypotheek restschuld
           - type: tile
-            entity: sensor.funda_overwaarde
+            entity: sensor.funda_tracker_overwaarde
             name: Overwaarde
           - type: tile
-            entity: sensor.funda_marktwinst
+            entity: sensor.funda_tracker_marktwinst
             name: Marktwinst
           - type: tile
-            entity: sensor.funda_markt_roi
+            entity: sensor.funda_tracker_markt_roi
             name: Markt ROI
           - type: tile
-            entity: sensor.funda_totale_winst
+            entity: sensor.funda_tracker_totale_winst
             name: Totale winst
           - type: tile
-            entity: sensor.funda_totale_roi
+            entity: sensor.funda_tracker_totale_roi
             name: Totale ROI
       - type: grid
         cards:

@@ -1,15 +1,29 @@
 # ============================================================
-# Funda Tracker — Home Assistant package (OPTIONAL)
+# Funda Tracker — example Home Assistant package
 # ============================================================
 # /config/packages/funda.yaml
 #
-# This package is OPTIONAL. Core sensors (value, bounds, stats,
-# confidence, price/m²) are pushed directly by the add-on.
+# This is an EXAMPLE SET, meant to be copied and adapted.
+# Nothing here is required: the core sensors (value, bounds,
+# stats, confidence, price/m²) come from the Funda Tracker
+# custom integration, and the scrape-failure alert is built
+# into the add-on.
 #
-# This package adds:
+# Requires packages to be enabled in configuration.yaml:
+#
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# NOTIFICATION TARGET:
+#   These automations use notify.notify, which Home Assistant
+#   resolves to the FIRST notify service it can find. That may
+#   not be the device you want, so consider replacing it with a
+#   specific one, e.g. notify.mobile_app_your_phone.
+#
+# What you get to start from:
 #   - Finance input helpers (purchase price, investment, mortgage)
 #   - Finance template sensors (overwaarde, winst, ROI)
-#   - Automations (notifications, alerts, yearly summary)
+#   - Five example automations (updates, alerts, yearly summary)
 # ============================================================
 
 # --- Input helpers ---
@@ -208,6 +222,8 @@ automation:
             Je woningwaarde is veranderd met {{ states('sensor.funda_tracker_maandwijziging_2') }}% — dat is meer dan normaal.
     mode: single
 
+  # Reads this package's own template sensors, not the integration's
+  # sensor.funda_tracker_* finance entities. Adjust if you use those instead.
   - alias: "Funda jaarsamenvatting"
     id: funda_yearly_summary
     trigger:
