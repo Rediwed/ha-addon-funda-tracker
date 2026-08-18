@@ -1,4 +1,6 @@
 import importlib
+import pathlib
+import re
 import sys
 import types
 import unittest
@@ -11,6 +13,7 @@ def stub_home_assistant():
 
     components = types.ModuleType("homeassistant.components")
     sensor_module = types.ModuleType("homeassistant.components.sensor")
+    sensor_module.ENTITY_ID_FORMAT = "sensor.{}"
     sensor_module.SensorEntity = type("SensorEntity", (), {})
     sensor_module.SensorDeviceClass = type(
         "SensorDeviceClass", (), {"MONETARY": "monetary"}
@@ -161,6 +164,39 @@ class FinanceSensorTests(unittest.TestCase):
 
         self.assertTrue(entity.extra_state_attributes["update_overdue"])
         self.assertIsNone(entity.extra_state_attributes["last_successful_update"])
+
+
+class EntityIdStabilityTests(unittest.TestCase):
+    """Entity ids are a public contract: dashboards break when they move."""
+
+    def published_entity_ids(self):
+        ids = {f"sensor.funda_tracker_{d[2]}" for d in sensor.SENSOR_TYPES}
+        ids |= {f"sensor.funda_tracker_{d[0]}" for d in const.FINANCE_SENSORS}
+        ids |= {f"number.funda_tracker_{d[1]}" for d in const.FINANCE_INPUTS}
+        return ids
+
+    def test_object_ids_carry_no_area_or_device_prefix(self):
+        # Home Assistant only skips the area/device prefix when the integration
+        # pins the object id itself, so every definition must supply one.
+        for definition in sensor.SENSOR_TYPES:
+            self.assertTrue(definition[2], f"missing object id for {definition[1]}")
+        for definition in const.FINANCE_INPUTS:
+            self.assertTrue(definition[1], f"missing object id for {definition[0]}")
+
+    def test_shipped_dashboards_only_use_published_entity_ids(self):
+        repo_root = pathlib.Path(__file__).resolve().parent.parent
+        published = self.published_entity_ids()
+        referenced = set()
+        for dashboard in (repo_root / "ha" / "dashboard").glob("*.yaml"):
+            referenced |= set(
+                re.findall(
+                    r"\b(?:sensor|number)\.funda_tracker_[a-z0-9_]+",
+                    dashboard.read_text(encoding="utf-8"),
+                )
+            )
+
+        self.assertTrue(referenced, "no dashboard entity references found")
+        self.assertEqual(referenced - published, set())
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 
 from homeassistant.components.sensor import (
+    ENTITY_ID_FORMAT,
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
@@ -24,20 +25,22 @@ _LOGGER = logging.getLogger(__name__)
 
 HOUSE_VALUE_KEY = "sensor.funda_house_value"
 
-# Sensor definitions: (key suffix in JSON, unique_id_suffix, name, unit, icon, device_class, state_class)
-SENSOR_TYPES: list[tuple[str, str, str, str | None, str, SensorDeviceClass | None, SensorStateClass | None]] = [
-    ("sensor.funda_house_value", "house_value", "Woningwaarde", "EUR", "mdi:home-analytics", SensorDeviceClass.MONETARY, SensorStateClass.MEASUREMENT),
-    ("sensor.funda_ondergrens", "ondergrens", "Ondergrens", "EUR", "mdi:arrow-collapse-down", SensorDeviceClass.MONETARY, SensorStateClass.MEASUREMENT),
-    ("sensor.funda_bovengrens", "bovengrens", "Bovengrens", "EUR", "mdi:arrow-collapse-up", SensorDeviceClass.MONETARY, SensorStateClass.MEASUREMENT),
-    ("sensor.funda_maandwijziging", "maandwijziging", "Maandwijziging", "EUR", "mdi:trending-up", SensorDeviceClass.MONETARY, None),
-    ("sensor.funda_maandwijziging_pct", "maandwijziging_pct", "Maandwijziging %", "%", "mdi:percent", None, None),
-    ("sensor.funda_jaarwijziging", "jaarwijziging", "Jaarwijziging", "EUR", "mdi:chart-line", SensorDeviceClass.MONETARY, None),
-    ("sensor.funda_jaarwijziging_pct", "jaarwijziging_pct", "Jaarwijziging %", "%", "mdi:percent", None, None),
-    ("sensor.funda_all_time_high", "all_time_high", "All-Time High", "EUR", "mdi:arrow-up-bold", SensorDeviceClass.MONETARY, None),
-    ("sensor.funda_all_time_low", "all_time_low", "All-Time Low", "EUR", "mdi:arrow-down-bold", SensorDeviceClass.MONETARY, None),
-    ("sensor.funda_betrouwbaarheid", "betrouwbaarheid", "Betrouwbaarheid", None, "mdi:shield-check", None, None),
-    ("sensor.funda_prijs_per_m2", "prijs_per_m2", "Prijs per m²", "EUR/m²", "mdi:ruler-square", None, None),
-    ("sensor.funda_delta_status", "delta_status", "Delta Status", None, "mdi:arrow-up-down", None, None),
+# Object ids are pinned so the entity_id never picks up the device's area as a
+# prefix. The _2 suffixes are historic and kept so existing dashboards survive.
+# (key suffix in JSON, unique_id_suffix, object id suffix, name, unit, icon, device_class, state_class)
+SENSOR_TYPES: list[tuple[str, str, str, str, str | None, str, SensorDeviceClass | None, SensorStateClass | None]] = [
+    ("sensor.funda_house_value", "house_value", "woningwaarde", "Woningwaarde", "EUR", "mdi:home-analytics", SensorDeviceClass.MONETARY, SensorStateClass.MEASUREMENT),
+    ("sensor.funda_ondergrens", "ondergrens", "ondergrens", "Ondergrens", "EUR", "mdi:arrow-collapse-down", SensorDeviceClass.MONETARY, SensorStateClass.MEASUREMENT),
+    ("sensor.funda_bovengrens", "bovengrens", "bovengrens", "Bovengrens", "EUR", "mdi:arrow-collapse-up", SensorDeviceClass.MONETARY, SensorStateClass.MEASUREMENT),
+    ("sensor.funda_maandwijziging", "maandwijziging", "maandwijziging", "Maandwijziging", "EUR", "mdi:trending-up", SensorDeviceClass.MONETARY, None),
+    ("sensor.funda_maandwijziging_pct", "maandwijziging_pct", "maandwijziging_2", "Maandwijziging %", "%", "mdi:percent", None, None),
+    ("sensor.funda_jaarwijziging", "jaarwijziging", "jaarwijziging", "Jaarwijziging", "EUR", "mdi:chart-line", SensorDeviceClass.MONETARY, None),
+    ("sensor.funda_jaarwijziging_pct", "jaarwijziging_pct", "jaarwijziging_2", "Jaarwijziging %", "%", "mdi:percent", None, None),
+    ("sensor.funda_all_time_high", "all_time_high", "all_time_high", "All-Time High", "EUR", "mdi:arrow-up-bold", SensorDeviceClass.MONETARY, None),
+    ("sensor.funda_all_time_low", "all_time_low", "all_time_low", "All-Time Low", "EUR", "mdi:arrow-down-bold", SensorDeviceClass.MONETARY, None),
+    ("sensor.funda_betrouwbaarheid", "betrouwbaarheid", "betrouwbaarheid", "Betrouwbaarheid", None, "mdi:shield-check", None, None),
+    ("sensor.funda_prijs_per_m2", "prijs_per_m2", "prijs_per_m2", "Prijs per m²", "EUR/m²", "mdi:ruler-square", None, None),
+    ("sensor.funda_delta_status", "delta_status", "delta_status", "Delta Status", None, "mdi:arrow-up-down", None, None),
 ]
 
 
@@ -70,9 +73,10 @@ class FundaSensor(CoordinatorEntity, RestoreEntity, SensorEntity):
     def __init__(self, coordinator, entry, store, sensor_def):
         """Initialise the sensor."""
         super().__init__(coordinator)
-        json_key, uid_suffix, name, unit, icon, device_class, state_class = sensor_def
+        json_key, uid_suffix, object_id, name, unit, icon, device_class, state_class = sensor_def
         self._json_key = json_key
         self._store = store
+        self.entity_id = ENTITY_ID_FORMAT.format(f"funda_tracker_{object_id}")
         self._attr_unique_id = f"funda_tracker_{uid_suffix}"
         self._attr_name = name
         self._attr_native_unit_of_measurement = unit
@@ -186,6 +190,7 @@ class FundaFinanceSensor(CoordinatorEntity, SensorEntity):
         uid_suffix, name, unit, icon, required_input = finance_def
         self._store = store
         self._required_input = required_input
+        self.entity_id = ENTITY_ID_FORMAT.format(f"funda_tracker_{uid_suffix}")
         self._attr_unique_id = f"funda_tracker_{uid_suffix}"
         self._attr_name = name
         self._attr_native_unit_of_measurement = unit

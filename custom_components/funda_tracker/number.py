@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.number import NumberEntity, NumberMode, RestoreNumber
+from homeassistant.components.number import (
+    ENTITY_ID_FORMAT,
+    NumberEntity,
+    NumberMode,
+    RestoreNumber,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType
@@ -24,8 +29,8 @@ async def async_setup_entry(
     """Set up the Funda Tracker finance inputs."""
     store = hass.data[DOMAIN][entry.entry_id]["finance"]
     async_add_entities(
-        FundaFinanceInput(store, entry, key, name, icon)
-        for key, name, icon in FINANCE_INPUTS
+        FundaFinanceInput(store, entry, key, object_id, name, icon)
+        for key, object_id, name, icon in FINANCE_INPUTS
     )
 
 
@@ -39,10 +44,11 @@ class FundaFinanceInput(RestoreNumber, NumberEntity):
     _attr_native_unit_of_measurement = "EUR"
     _attr_mode = NumberMode.BOX
 
-    def __init__(self, store, entry, key, name, icon):
+    def __init__(self, store, entry, key, object_id, name, icon):
         """Initialise the input."""
         self._store = store
         self._key = key
+        self.entity_id = ENTITY_ID_FORMAT.format(f"funda_tracker_{object_id}")
         self._attr_unique_id = f"funda_tracker_{key}"
         self._attr_name = name
         self._attr_icon = icon

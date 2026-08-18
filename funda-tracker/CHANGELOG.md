@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1 (2026-08-18)
+- Pin every entity id in the integration so Home Assistant no longer prefixes new entities with the device's area, which produced ids like `sensor.<area>_funda_tracker_overwaarde` and left dashboards showing unavailable entities
+- Note for anyone already on 1.1.0: Home Assistant keeps the entity id it already registered, so prefixed entities have to be renamed once under Settings, Devices and services, Entities. Fresh installs are correct straight away
+- Add a regression test that the shipped dashboards only reference entity ids the integration actually publishes
+
 ## 1.1.0 (2026-08-18)
 - The integration now provides the finance amounts itself as three `number` entities, so no input helpers have to be created by hand
 - Equity, market gain, total profit, and both ROI sensors are now part of the integration and stay unavailable until their amount is set

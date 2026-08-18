@@ -7,11 +7,12 @@ SENSOR_DATA_PATH = "/share/funda_tracker/sensors.json"
 SCAN_INTERVAL_MINUTES = 30
 STALE_DATA_AFTER = timedelta(days=35)
 
-# (storage key, entity name, icon)
+# Object ids are pinned so the entity_id never picks up the device's area as a prefix.
+# (storage key, object id suffix, entity name, icon)
 FINANCE_INPUTS = [
-    ("purchase_price", "Aankoopprijs", "mdi:cash"),
-    ("total_investment", "Totale investering", "mdi:cash-multiple"),
-    ("mortgage_balance", "Hypotheek", "mdi:bank"),
+    ("purchase_price", "aankoopprijs", "Aankoopprijs", "mdi:cash"),
+    ("total_investment", "totale_investering", "Totale investering", "mdi:cash-multiple"),
+    ("mortgage_balance", "hypotheek", "Hypotheek", "mdi:bank"),
 ]
 
 # (unique_id suffix, entity name, unit, icon, required finance input)
